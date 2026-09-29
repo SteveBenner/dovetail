@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
-  import { currentInstance, runtime, findPanel, nextOverlayId, closeOverlayById } from '../shell/state.svelte.js';
+  import { currentInstance, runtime, findPanel, nextOverlayId, closeOverlayById, activeElementInRoot } from '../shell/state.svelte.js';
   import type { OverlayRecord } from '../shell/state.svelte.js';
   import SnippetHost from './SnippetHost.svelte';
 
@@ -32,7 +32,7 @@
         component: SnippetHost,
         props: { snippet: children },
         anchor: anchor ?? null,
-        openerElement: document.activeElement instanceof Element ? document.activeElement : null,
+        openerElement: activeElementInRoot(),
         resolve: () => {
           open = false;
         }

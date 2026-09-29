@@ -20,8 +20,10 @@ fused 3 panels
    name, stop the fuse with `D-FUS-002`. Routes cannot collide, because each module's routes live in its own
    namespace (C005), and storage keys are namespaced by module.
 5. **Themes.** Every theme must supply every token, or the fuse stops with `D-TOK-001` naming the theme and the key.
-6. **Generate.** Writes the shell's registry, each panel's bound runtime module and the application's stylesheet.
-7. **Build.** Builds the application with Vite into `<out>/dist`. A build failure is `D-FUS-004`.
+6. **Generate.** Writes the shell's registry, each panel's bound runtime module, the application's stylesheet and
+   `prefetch.json`, which lists for every route the data operations the shell starts when that route is entered.
+7. **Build.** Builds the application with Vite into `<out>/dist`, and with `embed` also into `<out>/dist/embed` as a
+   custom element (see [Embedding](embedding.md)). A build failure is `D-FUS-004`.
 8. **Verify.** With `--verify`, builds a development bundle into `<out>/verify-build` and runs the composition journeys
    against it.
 9. **Report.** Writes `<out>/fuse-report.json`.
@@ -75,7 +77,7 @@ Panels are styled through Svelte's component scoping, and the shell never styles
 
 | Journey | What it proves |
 | --- | --- |
-| overlay | Each declared overlay opens, takes focus, closes on Escape when dismissible, returns focus and releases scroll lock |
+| overlay | Each declared overlay opens in the browser's top layer, takes focus, closes on Escape when dismissible, returns focus and releases scroll lock |
 | stacked overlays | Two blocking overlays from different panels stack in order, and closing the top one keeps the lower one's focus trap |
 | route | Every declared route renders its own panel, and no other panel's route handling fires |
 | event | Every declared event reaches each consumer and no panel that did not declare it |
@@ -84,6 +86,7 @@ Panels are styled through Svelte's component scoping, and the shell never styles
 | slot | At each slot's narrow and wide widths, no panel paints outside its slot |
 | crash | A deliberately crashed panel shows its fallback while every other panel still responds |
 | accessibility | axe-core finds no serious or critical issue on any route |
+| embed | With `embed`, the element renders in a hostile host page, its blocking overlays escape the host's clipping, and neither side's styles reach the other |
 
 Every journey also fails on an uncaught exception, a `console.error`, or a failed network request the flow did not
 intend. A failure prints its journey and panel, exits 1 with `D-VER-001`, and leaves a screenshot in

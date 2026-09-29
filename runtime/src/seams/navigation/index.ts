@@ -1,4 +1,4 @@
-import { runtime, findPanel } from '../../shell/state.svelte.js';
+import { runtime, findPanel, hostEvent } from '../../shell/state.svelte.js';
 import { tInternal } from '../../i18n/t.js';
 import type { Registry } from '../../types.js';
 
@@ -83,9 +83,9 @@ export function navigateFor(
   }
   const path = buildPath(route, params);
   if (options?.replace) {
-    history.replaceState({}, '', path);
+    runtime.location.replace(path);
   } else {
-    history.pushState({}, '', path);
+    runtime.location.push(path);
   }
   dispatchRouteChange();
 }
@@ -108,7 +108,7 @@ export function useRouteFor(module: string) {
       return runtime.route.module === module ? runtime.route.params : {};
     },
     get query() {
-      return parseQuery(location.pathname + location.search, module);
+      return parseQuery(runtime.location.path() + runtime.location.search(), module);
     }
   };
 }
@@ -126,16 +126,17 @@ export function useNavigation(): Array<{ label: string; href: string; active: bo
 
 export function dispatchRouteChange(): void {
   if (!runtime.registry) return;
-  const path = location.pathname;
+  const path = runtime.location.path();
   const match = resolvePath(path, runtime.registry);
   runtime.route = {
     path,
     module: match?.module ?? null,
     pattern: match?.pattern ?? null,
     params: match?.params ?? {},
-    query: parseQuery(location.pathname + location.search, match?.module ?? null)
+    query: parseQuery(path + runtime.location.search(), match?.module ?? null)
   };
   if (match) {
     runtime.routeLog.push({ module: match.module, pattern: match.pattern, path });
   }
+  hostEvent('dovetail-route', { path, module: match?.module ?? null });
 }

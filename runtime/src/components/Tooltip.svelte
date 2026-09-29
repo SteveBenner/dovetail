@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import { Z_FLOATING } from '../shell/zindex.js';
+  import { runtime, queryRoot } from '../shell/state.svelte.js';
 
   interface Props {
     text: string;
@@ -73,7 +74,10 @@
   }
 
   function portal(node: HTMLElement) {
-    const layer = document.querySelector('[data-dovetail-floating-layer]') ?? document.body;
+    const layer: Node =
+      wrapper?.closest('[data-dovetail-overlay]') ??
+      queryRoot('[data-dovetail-floating-layer]') ??
+      (runtime.root instanceof ShadowRoot ? runtime.root : document.body);
     layer.appendChild(node);
     return {
       destroy() {

@@ -1,0 +1,547 @@
+schema: rstack.blueprint/v1
+task: dovetail-0.3.0
+version: 0.3.0
+intent: >
+  Four generic capabilities for applications built from independently developed panels. (1) Embedding: a fused
+  application can also be built as one custom element with an open shadow root, so any web page can host it without
+  Svelte, a build step or an iframe. (2) Top-layer overlays: blocking overlays become native modal dialogs and every
+  other overlay, the toast region and the tooltip layer become manual popovers, so no ancestor can clip or cover
+  them. (3) Open schemas: the compiler also emits JSON Schemas without additionalProperties false, for outside
+  consumers that validate with a standard validator. (4) Prefetch and negotiation: the data operations of the
+  panels on a route start in parallel when the route is entered, and a response at another contract version is
+  accepted when the server declares a compatible negotiation or, under the tolerant policy, when it validates
+  against the panel's own schema. The authority for behaviour is specs/dovetail.spec.yml, sections embedding,
+  top_layer_overlays, prefetch, negotiation, compiler.outputs json_schema_open, and implementation_decisions dated
+  2026-09-28 from "embed build and the fuse report" on. Read those sections before starting.
+harness: claude-code
+worker: { model: sonnet, effort: medium, definition: coding-worker }
+repository: github.com/SteveBenner/dovetail (the local checkout at ~/github/foss/dovetail)
+spec: specs/dovetail.spec.yml
+previous_blueprint: specs/implementation/v0.2.0.impl.yml
+
+constraints:
+  - >-
+    AGENTS.md Part S. Write no tests, no spec files, no test directories and no test helpers. Verify by running the
+    real command line and the real browser against throwaway applications kept OUTSIDE the repository, under
+    <scratchpad>/<slice id>/, where <scratchpad> is
+    /tmp/claude-1000/-home-sven-bitbucket-paterasai-rstack-uber/78b5746b-7fee-4a2c-88dc-92ceebcdcd9d/scratchpad.
+    Browser driving scripts also live there. Report exactly what you ran and what it printed.
+  - >-
+    AGENTS.md Part Q. Write no comments, doc comments or docstrings in any file you write or change (Ruby,
+    JavaScript, TypeScript, Svelte, CSS, YAML, JSON, HTML). Only lines a tool reads survive (shebangs, magic comments).
+  - AGENTS.md Part F. No authorship or agent attribution anywhere.
+  - AGENTS.md Part E. Delete nothing outside your scratch directory; never run rm -r, git clean or find -delete.
+  - AGENTS.md Part J. Query codebase memory (project home-sven-github-foss-dovetail) before grepping.
+  - Do not run git add, git commit, git stash, git checkout or any other git write. The primary stages and commits.
+  - Do not edit specs/, docs/, README.md, CHANGELOG.md, VERSION, lib/dovetail/version.rb or package versions. The
+    primary writes the prose and bumps the version.
+  - Touch only your slice's owns_paths. Read anything. Needs outside them go in your report.
+  - >-
+    Shared files listed under shared_surfaces are edited under the peer-agent lock: before writing one, read
+    ~/github/foss/dovetail/TMP_AGENT_FILE_LOCKS.yml; if another agent_id holds the path, wait and re-read; otherwise
+    append your entry (path, agent_id = your slice id, purpose, acquired_at), edit, then remove only your entry.
+    Never remove another agent's entry and never delete the manifest file.
+  - No em-dash or en-dash characters in any user-visible string (CLI output, errors, runtime copy).
+  - >-
+    The Ruby side keeps the 2.6.10 floor with the standard library only: no endless methods, no pattern matching,
+    no numbered block parameters, no filter_map, no Hash#except, no keyword_init on Struct, no beginless ranges,
+    no argument forwarding (...). Check every Ruby file you touch with
+    docker run --rm -v "$PWD":/d -w /d ruby:2.6.10-slim ruby -c <file>.
+  - Keep every existing command, flag, exit code and output unchanged unless this file says otherwise.
+  - >-
+    The runtime must pass (cd runtime && npm run check) with no errors or warnings and must build with
+    (cd runtime && npm run build) after every runtime change; fuse uses runtime/dist.
+  - >-
+    Never style with a literal colour, length or shadow in runtime components; use the existing tokens (var(--...)),
+    as the surrounding runtime CSS does. Runtime controls stay the runtime's themed components.
+
+environment:
+  ruby_host: /usr/bin/ruby is Ruby 3.3. Ruby 4.0.6 is at ~/.rubies/ruby-4.0.6/bin/ruby.
+  ruby_floor: docker image ruby:2.6.10-slim (pulled; standard library only).
+  node: Node 26.10 and npm on the PATH. runtime/node_modules is installed and runtime/dist is built.
+  browser: System Google Chrome at /usr/bin/google-chrome; run headless. ferrum is in vendor/bundle (verify group).
+  run_cli: ruby ~/github/foss/dovetail/exe/dovetail <args>, from inside the application directory.
+  reference_app: >-
+    A fused throwaway app with two panels is at <scratchpad>/ref/myapp (dovetail.yml, ui/, modules/finance with a
+    blocking modal overlay named detail and home: finance, modules/people_operations). Its node_modules symlink
+    points at ~/github/foss/dovetail/runtime/node_modules. Copy it into your own scratch directory with cp -a and
+    work on the copy; never edit the reference in place. Its .dovetail/ output is stale; fuse rewrites it.
+
+shared_surfaces:
+  - path: lib/dovetail/fuse.rb
+    who: slice_ruby adds the prefetch.json write in the generate step; slice_embed changes config use, the generate
+      step's embed entry and the build and verify steps. Both edit under the lock.
+  - path: runtime/src/shell/state.svelte.ts
+    who: slice_embed first, slice_runtime_data after it (they never run at the same time).
+  - path: runtime/src/shell/DovetailShell.svelte
+    who: slice_embed first, slice_runtime_data after it.
+  - path: runtime/src/types.ts
+    who: slice_embed first, slice_runtime_data after it.
+
+waves:
+  - [slice_ruby, slice_embed]
+  - [slice_runtime_data]
+
+slices:
+  - id: slice_ruby
+    owns_paths:
+      - lib/dovetail/compiler.rb
+      - lib/dovetail/compiler/json_schema.rb
+      - lib/dovetail/compiler/registry.rb
+      - lib/dovetail/fuse/registry.rb
+      - lib/dovetail/fuse/prefetch.rb
+      - lib/dovetail/contract/change.rb
+      - lib/dovetail/contract/differ.rb
+      - lib/dovetail/negotiation.rb
+      - lib/dovetail.rb
+      - lib/dovetail/cli.rb
+      - lib/dovetail/cli/contract.rb
+      - lib/dovetail/fuse.rb (shared, generate step only, under the lock)
+    depends_on: []
+    deliverable: >-
+      schema-open output, the contract compat subcommand with Dovetail::Negotiation.compat, the prefetch field in
+      registry entries and in the generated TypeScript registry, and <out>/prefetch.json written by fuse.
+    detail:
+      schema_open:
+        - >-
+          In compiler/json_schema.rb add JsonSchema.open(schema) returning a deep copy of the schema Hash in which
+          every Hash that has the key "additionalProperties" with the value false loses that key. Any other
+          additionalProperties value (a schema Hash, as maps use) is kept. Walk Hashes and Arrays recursively; do
+          not mutate the input.
+        - >-
+          In compiler.rb, right after the schema/<mod>.schema.json write, write
+          schema-open/<mod>.schema.json with Dovetail::CanonicalJSON.pretty(JsonSchema.open(<the same schema>)),
+          and add the relative path to written. Generate the schema once and reuse it for both files.
+      change_subjects:
+        - >-
+          Change becomes Struct.new(:kind, :description, :subjects), subjects an Array of Strings, default [] when
+          not given (Change.new(kind, description) must keep working, so construct with subjects || []).
+        - >-
+          In differ.rb every Change.new passes subjects: removed or added type NAME and every field, enum or range
+          change inside diff_types gives ["type:NAME"]; removed or added operation NAME, and every change found for
+          its input or output, gives ["operation:NAME"]; removed or added event NAME and every change to its
+          payload gives ["event:NAME"]; every change from diff_panel and its helpers gives ["panel"]. Thread a
+          subject argument through diff_fields, diff_enum, diff_range and diff_type_ref instead of parsing labels.
+          Descriptions stay byte-identical, so contract diff's text and JSON output do not change.
+      negotiation:
+        - >-
+          New lib/dovetail/negotiation.rb, module Dovetail::Negotiation, module_function compat(old_hash,
+          new_hash), both model hashes as Contract::Model#to_h returns them. It runs Contract::Differ.diff(old_hash,
+          new_hash) and returns a Hash with string keys: "schema" => "dovetail.compat/v1", "module" =>
+          new_hash["module"], "from" => old_hash["version"], "to" => new_hash["version"], "operations" => {name =>
+          {"compatible" => Boolean, "breaking" => [descriptions]}} for every operation name in old_hash, and
+          "events" => the same for every event name in old_hash["emits"].
+        - >-
+          An operation NAME is affected by a breaking change whose subjects include "operation:NAME", or
+          "type:T" for any T in reach(NAME). reach(NAME) is the set of named types reached from the operation's
+          input and output TypeRefs in the old model united with the same in the new model (when the new model still
+          has the operation). Reaching walks a TypeRef: kind named adds its name and walks every field type of that
+          type in the model's "types" (guarding against cycles with a visited set); kind one_of adds and walks each
+          of "names"; kind list and map walk "of"; kind inline walks each field's "type"; kind scalar and ref stop
+          (ref is another module's type and another contract's version). An event NAME is affected the same way
+          through its "payload" TypeRef with subject "event:NAME". compatible is true when no breaking change affects
+          it; breaking lists the affecting changes' descriptions in differ order.
+        - Require it from lib/dovetail.rb next to the contract requires.
+      compat_cli:
+        - >-
+          cli/contract.rb gains the subcommand compat: dovetail contract compat <old.rb> <new.rb> [--format
+          text|json]. It needs exactly two files, else prints "dovetail contract compat: needs exactly two files" to
+          stderr and returns 2. It loads both with Dovetail::Contract.load_file (a load error propagates as today and
+          exits 2) and computes Dovetail::Negotiation.compat(old.to_h, new.to_h).
+        - >-
+          Text format, operations first, then events, each sorted by name, one line each:
+          "operation NAME: compatible" or "operation NAME: breaking (DESC; DESC)"; "event NAME: compatible" or
+          "event NAME: breaking (DESC; DESC)". A contract with neither prints nothing. JSON format prints
+          Dovetail::CanonicalJSON.pretty(result). Returns 0.
+        - >-
+          Update the contract usage line in lib/dovetail/cli.rb's USAGE to
+          "contract lint|diff|compat|show <file>..." (keep the surrounding format), and the unknown-subcommand
+          behaviour unchanged.
+      prefetch_registry:
+        - >-
+          compiler/registry.rb adds "prefetch" => the sorted, unique names of operations that are the data operation
+          of at least one view of the panel (views' "data"), whose "input" is {"kind" => "inline", "fields" => []},
+          and whose "idempotent" is true.
+        - >-
+          fuse/registry.rb emits prefetch: JSON.generate(entry["prefetch"] || []) as a field of each panel entry,
+          placed after operations.
+      prefetch_manifest:
+        - >-
+          New lib/dovetail/fuse/prefetch.rb, module Dovetail::Fuse::Prefetch, module_function manifest(entries,
+          layout). entries is an Array of registry entry Hashes (string keys, as generated/registry/<mod>.json
+          holds); layout is the Dovetail::Layout the fuse already has (slots Array of Hashes with "name", "size",
+          "region"; home; navigation Array of Hashes with "module").
+        - >-
+          home = layout.home || (layout.navigation.first || {})["module"] || (entries.first || {})["module"].
+          Routes = every route of every entry plus "/". The owner of a route is the entry that declares it; the
+          owner of "/" is home.
+        - >-
+          For each route R with owner M, a panel P is placed when any of its slots S maps to a layout slot L and L is
+          active: L is the layout slot named S["name"] if one exists, else the first layout slot whose size equals
+          S["size"], else none. L is active when L["region"] == "dock"; else when L["size"] is main, full or aside,
+          P["module"] == M; else when L["size"] is tile, M == home; else true. This mirrors
+          runtime/src/shell/placement.ts exactly; read it and keep the two identical.
+        - >-
+          Return {"schema" => "dovetail.prefetch/v1", "home" => home, "routes" => {R => sorted unique
+          ["<module>.<op>" for every placed P and every op in P["prefetch"]]}} with routes sorted by key.
+        - >-
+          In fuse.rb (under the lock), require_relative "fuse/prefetch"; in the generate step, after the registry
+          files are written, write <out>/prefetch.json with Dovetail::CanonicalJSON.pretty(
+          Dovetail::Fuse::Prefetch.manifest(panel_infos.map { |p| p[:entry] }, layout)) and add "prefetch.json" to the
+          step's generated list. Touch nothing else in fuse.rb.
+    acceptance:
+      - Every Ruby file you touched passes ruby -c in the ruby:2.6.10-slim container.
+      - >-
+        In a copy of the reference app, compile both contracts; schema-open/finance.schema.json exists, contains no
+        "additionalProperties": false, and is otherwise identical in keys to schema/finance.schema.json (show a
+        diff). The closed schema is byte-identical to what 0.2.0 wrote for the same contract.
+      - >-
+        Write two versions of a small contract in scratch (v1 and v2) where v2 removes a field of a type used only
+        by operation a, keeps operation b untouched, and changes an event payload; dovetail contract compat prints
+        a breaking, b compatible and the event breaking, in text and JSON; dovetail contract diff prints exactly what
+        it printed before the change (compare with git stash-free reasoning: run the unmodified differ through
+        git show HEAD:lib/dovetail/contract/differ.rb into a scratch copy of the repo if you need a baseline).
+      - >-
+        With finance's items made idempotent: true in the scratch copy, dovetail fuse --app ui (node on) writes
+        .dovetail/prefetch.json with "/" and "/finance" listing finance.items and "/people-operations" listing
+        nothing from finance; registry.generated.ts carries prefetch: ["items"] for finance and prefetch: [] for
+        people_operations; the fuse report's generate step lists prefetch.json.
+      - dovetail contract compat with one file prints the usage error and exits 2.
+
+  - id: slice_embed
+    owns_paths:
+      - runtime/src/shell/**
+      - runtime/src/seams/navigation/**
+      - runtime/src/seams/overlay/**
+      - runtime/src/seams/lifecycle/**
+      - runtime/src/components/Tooltip.svelte
+      - runtime/src/components/Overlay.svelte
+      - runtime/src/dev/**
+      - runtime/src/embed/**
+      - runtime/src/types.ts
+      - runtime/src/internal.ts
+      - runtime/package.json (exports only; not the version)
+      - runtime/tools/fuse-build.mjs
+      - runtime/tools/dovetail-plugin.mjs
+      - lib/dovetail/config.rb
+      - lib/dovetail/cli/fuse.rb
+      - lib/dovetail/fuse.rb (shared, under the lock)
+      - lib/dovetail/verify.rb
+      - lib/dovetail/verify/**
+    depends_on: []
+    deliverable: >-
+      Root-scoped shell, location adapters, top-layer overlays, the defineDovetailApp custom element, the embed
+      build (production and verify), and the top-layer and embed composition checks.
+    detail:
+      runtime_state:
+        - >-
+          state.svelte.ts: add root (Document | ShadowRoot, default document), hostElement (HTMLElement | null,
+          default null), hostOptions (HostOptions | null, default null) and location (LocationAdapter, default the
+          history adapter). Keep them plain fields with getters and setters like onPanelError, except location, whose
+          value must be $state so route reads stay reactive when the adapter is swapped.
+        - >-
+          types.ts: export interface HostOptions { theme?: string; locale?: string; routing?: 'history' | 'memory';
+          path?: string; apiBase?: string; versionPolicy?: 'strict' | 'tolerant'; prefetch?: boolean } and
+          interface LocationAdapter { readonly mode: 'history' | 'memory'; path(): string; search(): string;
+          push(path: string): void; replace(path: string): void; listen(onChange: () => void): () => void }.
+          path() is the pathname only; push and replace take a path that may carry a ?query.
+        - >-
+          New runtime/src/shell/location.ts: createHistoryLocation() (path = location.pathname, search =
+          location.search, push/replace via history.pushState/replaceState({}, '', path), listen adds and removes a
+          popstate listener on window) and createMemoryLocation(initial: string) (keeps path and search split at the
+          first ?, push and replace set both, listen returns a no-op remover). Reading path() and search() of the
+          memory adapter must be reactive (hold them in $state inside a .svelte.ts file; name the file
+          location.svelte.ts).
+        - >-
+          Add to state.svelte.ts: queryRoot(selector) (runtime.root.querySelector), queryRootAll(selector),
+          activeElementInRoot() (runtime.root.activeElement, which works for both Document and ShadowRoot),
+          styleContainer() (document.head when root is a Document, else the ShadowRoot), and
+          hostEvent(name, detail) (when hostElement is set, dispatch new CustomEvent(name, {detail, bubbles: true,
+          composed: true}) on it; otherwise do nothing).
+      root_scoping:
+        - >-
+          Replace every document.querySelector, document.querySelectorAll and document.activeElement in
+          runtime/src/shell, runtime/src/seams/overlay, runtime/src/seams/lifecycle, runtime/src/dev,
+          runtime/src/components/Overlay.svelte and runtime/src/components/Tooltip.svelte with queryRoot,
+          queryRootAll or activeElementInRoot. Leave document.documentElement (the scroll lock) as it is.
+        - >-
+          DovetailShell.svelte: the theme style element goes into styleContainer(), found there by
+          style[data-dovetail-theme]; the click and keydown listeners attach to runtime.root instead of document
+          and are removed from it on destroy; route changes are listened through runtime.location.listen and the
+          remover is called on destroy. In the click handler take the real target from event.composedPath()[0] and
+          push url.pathname + url.search through runtime.location.push before dispatchRouteChange().
+        - >-
+          DovetailShell gains props routing ('history' | 'memory', default 'history') and initialPath (default '/').
+          Effective values: routing = runtime.hostOptions?.routing ?? routing; initialPath =
+          runtime.hostOptions?.path ?? initialPath. Before the first dispatchRouteChange, set runtime.location to
+          createMemoryLocation(initialPath) for memory or createHistoryLocation() for history. The "/" redirect to
+          the home module's first route uses runtime.location.path() and runtime.location.replace.
+        - >-
+          Theme: runtime.theme is the source of truth. On init, runtime.theme =
+          registry.themes.find((t) => t.id === runtime.hostOptions?.theme) ?? theme. The style effect and the
+          data-theme and data-color-scheme attributes and color-scheme style read runtime.theme. Locale: runtime.locale
+          = runtime.hostOptions?.locale ?? locale.
+        - >-
+          Transport: when runtime.hostOptions?.apiBase is a string, runtime.transport =
+          createHttpTransport({ baseUrl: runtime.hostOptions.apiBase }) (import from ../transport/http.js); otherwise
+          the transport prop, as today. Do this before subscribing to events.
+        - >-
+          navigation/index.ts: navigateFor, useRouteFor's query and dispatchRouteChange read and write only through
+          runtime.location (path() and search()); nothing in the seam touches location or history directly.
+          dispatchRouteChange ends with hostEvent('dovetail-route', { path, module: match?.module ?? null }).
+        - >-
+          PanelHost.svelte fail(): after runtime.onPanelError?.(...), call hostEvent('dovetail-panel-error',
+          { module: panel.module, message: errorSummary }).
+        - dev/hooks.ts navigate uses runtime.location.push then dispatchRouteChange.
+      top_layer:
+        - >-
+          OverlayHost.svelte: render each overlay's body (the dismiss button for dismissible modal and drawer, then
+          the overlay component with its close prop) from one snippet. A blocking overlay renders as <dialog
+          class="dt-overlay dt-overlay--{kind}" data-dovetail-overlay={id} tabindex="-1" aria-modal="true"
+          role={kind === 'menu' ? 'menu' : undefined}> with use:topLayer={true} then use:trapFocus={true}, an
+          oncancel handler that calls event.preventDefault(), and an onclose handler (see below). Any other overlay
+          renders as <div popover="manual" class=... data-dovetail-overlay={id} tabindex="-1" role={kind === 'menu'
+          ? 'menu' : 'dialog'} aria-modal="false"> with use:topLayer={false} then use:trapFocus={false}. The
+          separate .dt-scrim element is removed. The per-overlay onkeydown Escape handler is removed; Escape is
+          handled only by the shell's keydown listener (dismissTopDismissible), as implementation_decisions
+          records.
+        - >-
+          Action topLayer(node, modal): on mount call (node as HTMLDialogElement).showModal() when modal, else
+          node.showPopover(). destroy: when modal and node.open, node.close(); when not modal and
+          node.matches(':popover-open'), node.hidePopover(). Guard each call with the element being connected.
+        - >-
+          onclose (the browser closed a dialog itself, which Chrome's close-watcher can do after repeated Escape
+          without user activation): if the overlay is still in runtime.overlays, then when it is dismissible call
+          closeOverlayById(id, undefined), otherwise call showModal() again on the next microtask.
+        - >-
+          CSS: .dt-overlay first resets the user-agent dialog and popover styles: margin 0, inset auto, border
+          none, padding 0, max-width none, max-height none, background transparent, color inherit, overflow
+          visible, position fixed, pointer-events auto. The kind rules follow and keep 0.2.0's size, border,
+          background, padding, radius and elevation; the modal no longer centres with a transform: it uses inset 0,
+          margin auto, height fit-content, keeping its width and max-height, so a fixed-position tooltip inside it
+          is positioned against the viewport. dialog.dt-overlay::backdrop { background: var(--scrim); } replaces the
+          scrim, with the same transition. .dt-overlay-host keeps its element and attribute for the hooks.
+        - >-
+          The outside-click handler reads the target from event.composedPath()[0] and finds the host with
+          queryRoot('.dt-overlay-host'); behaviour otherwise unchanged.
+        - >-
+          Toast region: a div with popover="manual", class dt-toast-region, aria-live="polite", shown with
+          showPopover() on mount and hidden on destroy, and re-raised with hidePopover() then showPopover() in an
+          $effect whenever runtime.toasts.length increases. Its CSS resets inset auto, margin 0, border none,
+          padding 0, background transparent, overflow visible, then keeps 0.2.0's bottom, right, flex column and
+          gap; the container has pointer-events none and each .dt-toast pointer-events auto. Drop its z-index.
+        - >-
+          Floating layer: the div gets popover="manual" and is shown on mount, hidden on destroy; CSS inset 0,
+          margin 0, border none, padding 0, background transparent, width auto, height auto, overflow visible,
+          position fixed, pointer-events none.
+        - >-
+          Tooltip.svelte portal: the target is the wrapper's closest('[data-dovetail-overlay]') when the trigger
+          sits inside an open overlay, else queryRoot('[data-dovetail-floating-layer]'), else document.body when the
+          root is a Document or the ShadowRoot otherwise.
+        - >-
+          dev/hooks.ts gains overlays.topLayer(id): 'modal' when the element with that data-dovetail-overlay matches
+          :modal, 'popover' when it matches :popover-open, else 'none'.
+      embed_element:
+        - >-
+          New runtime/src/embed/element.ts exporting defineDovetailApp(tag: string, App: Component, css: string):
+          void. If customElements.get(tag) is set, return. Define a class extending HTMLElement with
+          observedAttributes ['theme', 'locale', 'path'] and register it under tag.
+        - >-
+          Module-level: mounted (the element currently mounted, or null) and warned (Boolean). connectedCallback:
+          if mounted is another element, log console.error(`D-RUN-007 only one <${tag}> may be mounted at a time`)
+          once (warned) and return. Otherwise: shadow = this.shadowRoot ?? this.attachShadow({ mode: 'open' });
+          clear it with replaceChildren(); append a style element whose textContent is ":host { display: block; }"
+          followed by css; append a div target; set runtime.root = shadow, runtime.hostElement = this,
+          runtime.hostOptions from the attributes (theme, locale, routing default 'memory', path default '/',
+          api-base as apiBase when the attribute is present, version-policy as versionPolicy when it is strict or
+          tolerant, prefetch as false when the attribute equals "false", true when present otherwise, undefined when
+          absent); app = mount(App, { target }); flushSync(); mounted = this; hostEvent('dovetail-ready', {}).
+        - >-
+          disconnectedCallback: only when mounted is this: unmount(app); flushSync(); mounted = null;
+          runtime.root = document; runtime.hostElement = null; runtime.hostOptions = null;
+          this.shadowRoot?.replaceChildren().
+        - >-
+          attributeChangedCallback(name, oldValue, value): only when mounted is this and the value changed. theme:
+          runtime.theme = the registry theme with that id, when one exists. locale: runtime.locale = value ?? 'en-US'.
+          path: when runtime.location.mode is 'memory', runtime.location.push(value ?? '/') then
+          dispatchRouteChange().
+        - >-
+          Export it through a new entry: runtime/src/embed.ts re-exporting defineDovetailApp, and in
+          runtime/package.json an "./embed" export shaped like the others (types ./dist/embed.d.ts, svelte and
+          default ./dist/embed.js). In tools/dovetail-plugin.mjs dovetailAliases, alias '@dovetail/runtime/embed' to
+          path.join(runtimeDist, 'embed.js') alongside internal, components and icons (non-live builds only).
+      embed_build:
+        - >-
+          config.rb: embed returns true only when the raw value is true; embed_tag returns the raw value or
+          "dovetail-app". Add Config#validate_embed_tag! raising Dovetail::Error.new("D-CFG-001", "embed_tag
+          <tag> is not a valid custom element name") unless the tag matches /\A[a-z][a-z0-9-]*[a-z0-9]\z/, contains
+          a hyphen, contains no "--", and is not one of the reserved names listed in the spec's
+          embedding.configuration.
+        - >-
+          cli/fuse.rb: --embed sets embed: true for the run; pass embed: through Fuse.run and Fuse#initialize.
+        - >-
+          fuse.rb (under the lock): @embed = embed || @config.embed. When @embed, call
+          @config.validate_embed_tag! at the start of run. In the generate step, when @embed and live is not enabled,
+          write <out>/embed.generated.ts containing, one statement per line: import css from '$dovetail/app.css?inline';
+          import App from '<absolute path of the shell's App.svelte>'; import { defineDovetailApp } from
+          '@dovetail/runtime/embed'; defineDovetailApp('<tag>', App, css); and add "embed.generated.ts" to the
+          generated list.
+        - >-
+          fuse.rb build step: after the application build succeeds, when @embed: if live is enabled or node is
+          false, set the result's "embed" to {"skipped" => reason} with reason "live components need the
+          application's import map" or "node unavailable"; otherwise run a second node build with the same config
+          plus embed: {enabled: true, tag, entry: <out>/embed.generated.ts, outDir: <dist>/embed} and set "embed" to
+          {"ok" => true, "path" => "<dist>/embed/<tag>.js", "tag" => tag}. A failure raises D-FUS-004 like the
+          application build. Without @embed the result has no "embed" key.
+        - >-
+          fuse.rb verify step: when @embed and live is not enabled, after the development build, run the same embed
+          build into <verify-build>/embed from a development registry (registry.development.generated.ts, as the
+          verify build uses), then write <verify-build>/embed-host.html (below) and
+          <verify-build>/.dovetail-embed.json containing {"tag": tag}.
+        - >-
+          fuse-build.mjs: when config.embed?.enabled, call build() once with: root, cacheDir, define and
+          resolve.alias as the application build (development flag from config), plugins [svelte({ emitCss: false,
+          compilerOptions: { css: 'injected' } }), tailwindcss(), dovetailBindingPlugin(panels, out, live)], and
+          build: { outDir: config.embed.outDir, emptyOutDir: true, lib: { entry: config.embed.entry, formats:
+          ['es'], fileName: () => `${config.embed.tag}.js` }, rollupOptions: { output: { inlineDynamicImports: true }
+          } }, plus define 'process.env.NODE_ENV' as JSON.stringify(development ? 'development' : 'production'). Skip
+          the application build when config.embed.only is true; fuse.rb sets only: true for the embed-only calls.
+          The emitted module must not reference process at runtime and must carry every component's CSS; verify both.
+        - >-
+          embed-host.html (written by fuse.rb from a heredoc; <tag> substituted): a doctype, charset, a style block
+          with * { box-sizing: content-box; font-family: serif } body { margin: 13px } button { background:
+          rgb(255, 0, 0); border: 5px solid rgb(0, 255, 0) } div { line-height: 3 } #hostile-header { position:
+          fixed; top: 0; left: 0; right: 0; height: 40px; z-index: 2147483647; background: rgb(0, 0, 0) }
+          #hostile-wrap { position: relative; z-index: 1; overflow: hidden; transform: translateZ(0); height: 320px;
+          margin-top: 60px }, then a classic script setting window.__embedReady = false and adding a document
+          listener for dovetail-ready that sets it true, then <div id="hostile-header"></div><button
+          id="host-button">host</button><div id="hostile-wrap"><TAG></TAG></div> and <script type="module"
+          src="./embed/<tag>.js"></script>.
+      verifier:
+        - >-
+          journeys.rb overlay journey: after an overlay opens, evaluate window.__dovetail.overlays.topLayer(id); a
+          blocking overlay must answer modal and any other popover, else record "overlay NAME is not in the top
+          layer". Apply the same check to both overlays in the stacked journey.
+        - >-
+          verify.rb: after the existing journeys, when <build_dir>/.dovetail-embed.json exists, go to
+          /embed-host.html, wait up to 10 s for window.__embedReady, then run an embed journey (in journeys.rb) that
+          records failures under journey "embed": the element's shadowRoot has at least one [data-dovetail-panel];
+          for each panel mounted in the shadow root, its first declared blocking overlay (if any) opens through
+          window.__dovetail.overlays.open, answers topLayer modal, and shadowRoot.elementFromPoint at the centre of
+          its bounding rectangle lies inside it; then it closes through the hooks. document.getElementById
+          ('host-button') keeps computed background-color rgb(255, 0, 0) and document.body keeps computed margin
+          13px. Uncaught exceptions on that page fail the journey; failed network requests on that page do not
+          (the embed calls a backend the static server does not have). Merge the journey into the result so ok is
+          false when it failed, and screenshot on failure like the others.
+    acceptance:
+      - npm run check passes with no errors or warnings and npm run build succeeds.
+      - Every Ruby file you touched passes ruby -c in the ruby:2.6.10-slim container.
+      - >-
+        In a copy of the reference app, dovetail fuse --app ui --verify (embed off) passes every journey, including
+        the new top-layer checks, and the built dist has no embed directory; report the journeys section.
+      - >-
+        With --embed, fuse --verify passes including the embed journey; dist/embed/dovetail-app.js exists; the
+        report's build.embed is {ok, path, tag}. grep the module for "process." and report none at runtime.
+      - >-
+        Drive a headless Chrome script from the scratch directory against dist/index.html served by any static
+        server (dovetail's StaticServer from Ruby is fine): open finance's detail modal through the UI or hooks and
+        confirm with document.querySelector('[data-dovetail-overlay]').matches(':modal') and a screenshot that it is
+        centred, bordered and themed as before; press Escape once with two dismissible overlays open and confirm
+        exactly one closes.
+      - >-
+        A host page you write in scratch that sets theme="apple-noir" then changes it to tronwave, and changes path
+        to /people-operations, re-themes and navigates without a reload; a second <dovetail-app> logs D-RUN-007 once;
+        removing the element and adding it back remounts. Report screenshots' paths.
+      - >-
+        embed_tag: "Bad--tag" fails fuse with D-CFG-001; embed_tag: "my-app" builds dist/embed/my-app.js; with live
+        globs set and embed on, the report says embed skipped with the live reason.
+
+  - id: slice_runtime_data
+    owns_paths:
+      - runtime/src/transport/http.ts
+      - runtime/src/transport/development.ts
+      - runtime/src/seams/data/**
+      - runtime/src/shell/prefetch.ts
+      - runtime/src/shell/state.svelte.ts (shared)
+      - runtime/src/shell/DovetailShell.svelte (shared)
+      - runtime/src/types.ts (shared)
+    depends_on: [slice_ruby, slice_embed]
+    deliverable: Runtime negotiation under the strict and tolerant policies, and route-driven prefetch.
+    detail:
+      types:
+        - >-
+          RegistryPanel gains readonly prefetch: readonly string[]. The ok branch of Result gains readonly
+          negotiated?: { readonly requested: number; readonly served: number }. DovetailErrorValue gains readonly
+          supported_versions?: readonly number[].
+      state:
+        - >-
+          runtime gains versionPolicy ('strict' | 'tolerant', default 'strict'), prefetchEnabled (Boolean, default
+          true), prefetchHeld (a plain Map<string, { startedAt: number; promise: Promise<Result<unknown,
+          string>> }>, keyed <module>.<operation>), and negotiatedWarned (a Set<string>).
+      shell:
+        - >-
+          DovetailShell gains props versionPolicy (default 'strict') and prefetch (default true). Effective values:
+          runtime.versionPolicy = runtime.hostOptions?.versionPolicy ?? versionPolicy; runtime.prefetchEnabled =
+          runtime.hostOptions?.prefetch ?? prefetch. Set both before the first dispatchRouteChange.
+        - >-
+          Server events at another version (the existing branch in the events subscription): when
+          runtime.versionPolicy is 'tolerant' and validate(producer's payload_schema for message.event, message.data)
+          returns no errors, deliver it with emitFor as for a matching version and, in development, warn
+          D-RUN-008 once per event id (negotiatedWarned); otherwise keep today's development warning and drop it.
+          Import validate from ../validate/jsonschema.js.
+        - >-
+          Prefetch trigger: an $effect that reads runtime.route.path (and runtime.route.module) and, when
+          runtime.prefetchEnabled and a transport and registry exist, calls startPrefetch(runtime.route) from
+          ./prefetch.ts. Nothing else in the shell changes.
+      prefetch:
+        - >-
+          New runtime/src/shell/prefetch.ts. PREFETCH_HOLD_MS = 5000. placedModules(registry, route) returns the
+          modules of every panel placed on the route across every layout slot, using slotPlacements from
+          ./placement.js for each registry.layout.slots name (never re-implement placement). startPrefetch(route):
+          drop held entries older than PREFETCH_HOLD_MS; for each placed panel and each name in panel.prefetch whose
+          key has no fresh held entry, find the operation in panel.operations, and hold
+          { startedAt: Date.now(), promise: runtime.transport.call(panel.module, name, {}, { timeout_ms:
+          op.timeout_ms, idempotent: op.idempotent, contract_version: panel.contract_version }) }. Calls are started
+          together, not awaited in turn. A rejected promise is caught and held as an error result
+          { ok: false, error: { code: 'internal', message } } so no unhandled rejection is ever raised.
+          takePrefetched(module, operation, input): when runtime.prefetchEnabled, input is an object with no own
+          keys, and a held entry for the key is fresh, delete it and return its promise; otherwise return null.
+      data_seam:
+        - >-
+          callOperation: before calling the transport, const held = takePrefetched(module, operation, input); the
+          result is await held when it is not null, else the transport call as today. Validation and violations stay
+          as they are. When the result is ok and carries negotiated and runtime.development, warn D-RUN-008 once
+          per <module>.<operation> (negotiatedWarned) naming requested and served.
+      negotiation_transport:
+        - >-
+          http.ts performOnce: when body.contract_version differs from callOptions.contract_version: if body.status
+          is 'ok' and (body.negotiated?.requested === callOptions.contract_version or runtime.versionPolicy ===
+          'tolerant'), find the operation's output_schema in runtime.registry (the panel of module, the operation of
+          that name) and validate body.data against it (validate from ../validate/jsonschema.js; resolveRef finds
+          cross-module refs through runtime.registry.schemas). No errors: return ok with data, contract_version:
+          body.contract_version, and negotiated { requested: callOptions.contract_version, served:
+          body.contract_version }, statusForBreaker 'ok'. Errors, or no schema found: return the
+          contract_version_mismatch error as today plus path: the first error's path. In every mismatch result add
+          supported_versions when body.supported_versions is an array of numbers. The response body type gains
+          negotiated? and supported_versions?.
+        - The development transport answers at the panel's own version and needs no change beyond typing.
+    acceptance:
+      - npm run check passes with no errors or warnings and npm run build succeeds.
+      - >-
+        In a copy of the reference app with finance's items idempotent: true, fuse --verify passes every journey.
+        In a headless Chrome script against the verify build, count the development transport's calls: entering
+        /finance calls finance.items once, and the panel's own call is served from the held prefetch (instrument
+        through window.__dovetail or a wrapped transport in a scratch shell copy, not by editing the runtime).
+        With prefetch={false} set in the scratch shell's App.svelte, no call starts before the panel mounts.
+      - >-
+        Against a tiny scratch backend (Ruby WEBrick bound to 127.0.0.1) serving /api/v1/modules/finance/items:
+        a response at contract_version 2 with negotiated {requested: 1, served: 2} and valid data renders ready
+        under strict; the same without negotiated shows the error state under strict and ready under tolerant; data
+        failing the schema shows the error state under both; supported_versions reaches the error result. Report the
+        requests and what rendered, with screenshot paths.
+
+out_of_scope:
+  - Any second framework adapter, server-side rendering, or runtime loading of separately deployed panels.
+  - Anchored positioning of popovers and menus (they keep 0.2.0's placement).
+  - Changing the shell template's App.svelte, the layout rules or the shape checker.
+  - Docs, specs, CHANGELOG, README and version bumps (the primary writes them).

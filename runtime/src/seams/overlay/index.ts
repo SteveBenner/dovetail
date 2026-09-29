@@ -5,6 +5,7 @@ import {
   nextOverlayId,
   nextToastId,
   closeOverlayById,
+  activeElementInRoot,
   type OverlayRecord
 } from '../../shell/state.svelte.js';
 import type { OverlayHandle } from '../../types.js';
@@ -51,8 +52,8 @@ export function openOverlayFor<P extends Record<string, unknown>, R = unknown>(
     blocking: declared.blocking,
     component,
     props,
-    anchor: anchor ?? (document.activeElement instanceof Element ? document.activeElement : null),
-    openerElement: document.activeElement instanceof Element ? document.activeElement : null,
+    anchor: anchor ?? activeElementInRoot(),
+    openerElement: activeElementInRoot(),
     resolve: resolveClosed as (value: unknown) => void,
     probe
   };
@@ -94,11 +95,12 @@ export function toastFor(
   }
 }
 
-export function dismissTopDismissible(): void {
+export function dismissTopDismissible(): boolean {
   for (let i = runtime.overlays.length - 1; i >= 0; i -= 1) {
     if (runtime.overlays[i].dismissible) {
       closeOverlayById(runtime.overlays[i].id, undefined);
-      return;
+      return true;
     }
   }
+  return false;
 }

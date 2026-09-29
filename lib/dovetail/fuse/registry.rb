@@ -62,6 +62,7 @@ module Dovetail
           fields << "emits: #{JSON.generate(entry["emits"] || [])}"
           fields << "consumes: #{JSON.generate(entry["consumes"] || [])}"
           fields << "operations: #{JSON.generate(entry["operations"] || [])}"
+          fields << "prefetch: #{JSON.generate(entry["prefetch"] || [])}"
           fields << "views: #{JSON.generate(entry["views"] || [])}"
           fields << "props: #{JSON.generate(entry["props"] || [])}"
           fields << "messages: #{messages_object(panel_messages_vars)}"

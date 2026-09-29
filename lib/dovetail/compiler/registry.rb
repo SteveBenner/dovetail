@@ -33,10 +33,18 @@ module Dovetail
               "output_schema" => { "$ref" => "#{ref_base}#/$defs/operation.#{name}.output" }
             }
           },
+          "prefetch" => prefetch_operations(model, panel),
           "views" => panel["views"].map { |v| { "name" => v["name"], "data_operation" => "#{mod}.#{v["data"]}", "states" => v["states"] } },
           "props" => panel["props"].map { |p| { "name" => p["name"], "required" => p["required"], "schema" => { "$ref" => "#{ref_base}#/$defs/prop.#{p["name"]}" } } },
           "depends_on" => model.depends_on
         }
+      end
+
+      def prefetch_operations(model, panel)
+        panel["views"].map { |v| v["data"] }.uniq.select do |name|
+          op = model.operations[name]
+          op && op["idempotent"] == true && op["input"] == { "kind" => "inline", "fields" => [] }
+        end.sort
       end
     end
   end

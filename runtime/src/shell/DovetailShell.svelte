@@ -1,10 +1,14 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import { untrack } from 'svelte';
-  import { runtime } from './state.svelte.js';
+  import { runtime, styleContainer, closeOverlayById } from './state.svelte.js';
+  import { createHistoryLocation, createMemoryLocation } from './location.svelte.js';
+  import { createHttpTransport } from '../transport/http.js';
   import { dispatchRouteChange } from '../seams/navigation/index.js';
   import { dispatchKeydown } from '../seams/keyboard/index.js';
   import { dismissTopDismissible } from '../seams/overlay/index.js';
+  import { startPrefetch } from './prefetch.js';
+  import { validate } from '../validate/jsonschema.js';
   import { emitFor } from '../seams/events/index.js';
   import { installDevHooks, removeDevHooks } from '../dev/hooks.js';
   import { onDestroy } from 'svelte';
@@ -18,18 +22,27 @@
     locale?: string;
     transport: Transport;
     onPanelError?: (module: string, error: unknown) => void;
+    routing?: 'history' | 'memory';
+    initialPath?: string;
+    versionPolicy?: 'strict' | 'tolerant';
+    prefetch?: boolean;
     children?: Snippet;
   }
 
-  let { registry, theme, locale = 'en-US', transport, onPanelError, children }: Props = $props();
+  let { registry, theme, locale = 'en-US', transport, onPanelError, routing = 'history', initialPath = '/', versionPolicy = 'strict', prefetch = true, children }: Props = $props();
 
   untrack(() => {
     runtime.registry = registry;
-    runtime.locale = locale;
-    runtime.transport = transport;
+    runtime.locale = runtime.hostOptions?.locale ?? locale;
+    const apiBase = runtime.hostOptions?.apiBase;
+    runtime.transport = typeof apiBase === 'string' ? createHttpTransport({ baseUrl: apiBase }) : transport;
     runtime.onPanelError = onPanelError ?? null;
-    runtime.theme = theme;
+    runtime.versionPolicy = runtime.hostOptions?.versionPolicy ?? versionPolicy;
+    runtime.prefetchEnabled = runtime.hostOptions?.prefetch ?? prefetch;
+    runtime.theme = registry.themes.find((t) => t.id === runtime.hostOptions?.theme) ?? theme;
   });
+
+  const activeTheme = $derived(runtime.theme ?? theme);
 
   function themeStyle(activeTheme: Theme): string {
     const declarations = Object.entries(activeTheme.tokens)
@@ -39,33 +52,37 @@
   }
 
   $effect(() => {
-    let styleEl = document.querySelector('style[data-dovetail-theme]');
+    const container = styleContainer() as ParentNode & Node;
+    let styleEl = container.querySelector('style[data-dovetail-theme]');
     if (!styleEl) {
       styleEl = document.createElement('style');
       styleEl.setAttribute('data-dovetail-theme', '');
-      document.head.appendChild(styleEl);
+      container.appendChild(styleEl);
     }
-    styleEl.textContent = themeStyle(theme);
+    styleEl.textContent = themeStyle(activeTheme);
   });
 
-  function onDocumentClick(event: MouseEvent): void {
-    const anchor = (event.target as Element)?.closest?.('a[href]') as HTMLAnchorElement | null;
+  function onRootClick(event: Event): void {
+    const mouse = event as MouseEvent;
+    const origin = (mouse.composedPath()[0] ?? mouse.target) as Element | null;
+    const anchor = origin?.closest?.('a[href]') as HTMLAnchorElement | null;
     if (!anchor) return;
     if (anchor.target && anchor.target !== '_self') return;
-    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    if (mouse.defaultPrevented || mouse.button !== 0 || mouse.metaKey || mouse.ctrlKey || mouse.shiftKey || mouse.altKey) return;
     const url = new URL(anchor.href, location.href);
     if (url.origin !== location.origin) return;
-    event.preventDefault();
-    history.pushState({}, '', url.pathname + url.search);
+    mouse.preventDefault();
+    runtime.location.push(url.pathname + url.search);
     dispatchRouteChange();
   }
 
-  function onDocumentKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape') {
-      dismissTopDismissible();
+  function onRootKeydown(event: Event): void {
+    const keyEvent = event as KeyboardEvent;
+    if (keyEvent.key === 'Escape') {
+      if (dismissTopDismissible()) keyEvent.preventDefault();
       return;
     }
-    dispatchKeydown(event);
+    dispatchKeydown(keyEvent);
   }
 
   $effect(() => {
@@ -73,36 +90,55 @@
     document.documentElement.style.scrollbarGutter = runtime.scrollLockCount > 0 ? 'stable' : '';
   });
 
-  untrack(() => {
-    if (location.pathname === '/') {
+  const root = runtime.root;
+
+  const stopListening = untrack(() => {
+    const effectiveRouting = runtime.hostOptions?.routing ?? routing;
+    const effectivePath = runtime.hostOptions?.path ?? initialPath;
+    runtime.location = effectiveRouting === 'memory' ? createMemoryLocation(effectivePath) : createHistoryLocation();
+    if (runtime.location.path() === '/') {
       const homeModule = registry.layout.home ?? registry.layout.navigation[0]?.module ?? registry.panels[0]?.module ?? null;
       const homePanel = homeModule ? registry.panels.find((p) => p.module === homeModule) : null;
       const firstRoute = homePanel?.routes[0];
       if (firstRoute) {
-        history.replaceState({}, '', firstRoute);
+        runtime.location.replace(firstRoute);
       }
     }
     dispatchRouteChange();
+    return runtime.location.listen(dispatchRouteChange);
   });
-
-  window.addEventListener('popstate', dispatchRouteChange);
-  document.addEventListener('click', onDocumentClick);
-  document.addEventListener('keydown', onDocumentKeydown);
+  root.addEventListener('click', onRootClick);
+  root.addEventListener('keydown', onRootKeydown);
 
   onDestroy(() => {
-    window.removeEventListener('popstate', dispatchRouteChange);
-    document.removeEventListener('click', onDocumentClick);
-    document.removeEventListener('keydown', onDocumentKeydown);
+    stopListening();
+    root.removeEventListener('click', onRootClick);
+    root.removeEventListener('keydown', onRootKeydown);
+    for (const overlay of [...runtime.overlays]) closeOverlayById(overlay.id, undefined);
+    runtime.toasts.length = 0;
+    document.documentElement.style.overflow = '';
+    document.documentElement.style.scrollbarGutter = '';
   });
 
   const unsubscribeEvents = untrack(() => {
     const eventIds = [...new Set(registry.panels.flatMap((p) => [...p.emits.map((e) => e.id), ...p.consumes]))];
-    (transport as unknown as { setEventIds?(ids: readonly string[]): void }).setEventIds?.(eventIds);
+    (runtime.transport as unknown as { setEventIds?(ids: readonly string[]): void }).setEventIds?.(eventIds);
     const warnedVersions = new Set<string>();
-    return transport.subscribe('events', (message) => {
+    return runtime.transport!.subscribe('events', (message) => {
       const module = message.event.slice(0, message.event.indexOf('.'));
       const producer = registry.panels.find((p) => p.module === module);
       if (producer && message.contract_version !== producer.contract_version) {
+        const emitted = producer.emits.find((e) => e.id === message.event);
+        if (runtime.versionPolicy === 'tolerant' && emitted && validate(emitted.payload_schema, message.data).length === 0) {
+          if (registry.development && !runtime.negotiatedWarned.has(message.event)) {
+            runtime.negotiatedWarned.add(message.event);
+            console.warn(
+              `D-RUN-008 ${message.event} accepted at contract version ${message.contract_version}, expected ${producer.contract_version}`
+            );
+          }
+          emitFor(module, message.event, message.data, 'server');
+          return;
+        }
         if (registry.development && !warnedVersions.has(message.event)) {
           warnedVersions.add(message.event);
           console.warn(
@@ -115,6 +151,15 @@
     });
   });
 
+  $effect.pre(() => {
+    const path = runtime.route.path;
+    const module = runtime.route.module;
+    void path;
+    void module;
+    if (!runtime.prefetchEnabled || !runtime.transport || !runtime.registry) return;
+    untrack(() => startPrefetch(runtime.route));
+  });
+
   if (untrack(() => registry.development)) {
     installDevHooks();
   }
@@ -125,7 +170,7 @@
   });
 </script>
 
-<div class="dt-shell" data-theme={theme.id} data-color-scheme={theme.color_scheme} style:color-scheme={theme.color_scheme}>
+<div class="dt-shell" data-theme={activeTheme.id} data-color-scheme={activeTheme.color_scheme} style:color-scheme={activeTheme.color_scheme}>
   {@render children?.()}
   <OverlayHost />
   {#if registry.development}

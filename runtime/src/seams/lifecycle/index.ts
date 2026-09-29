@@ -1,4 +1,4 @@
-import { currentInstance } from '../../shell/state.svelte.js';
+import { currentInstance, queryRoot } from '../../shell/state.svelte.js';
 
 export function everyFor(module: string, ms: number, fn: () => void): () => void {
   const instance = currentInstance(module);
@@ -114,7 +114,7 @@ export function subscribeFor<T>(
 }
 
 export function reportPanelError(module: string, error: unknown): void {
-  const target = document.querySelector(`[data-dovetail-panel="${module}"]`);
+  const target = queryRoot(`[data-dovetail-panel="${module}"]`);
   const event = new CustomEvent('dovetail:panelerror', { detail: { module, error }, bubbles: true });
   if (target) target.dispatchEvent(event);
   else console.error(error);

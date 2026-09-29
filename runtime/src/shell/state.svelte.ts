@@ -1,5 +1,6 @@
 import { getContext, setContext } from 'svelte';
-import type { Registry, Theme, Transport, OverlayKind, ViewStatus } from '../types.js';
+import type { Registry, Result, Theme, Transport, OverlayKind, ViewStatus, HostOptions, LocationAdapter } from '../types.js';
+import { createHistoryLocation } from './location.svelte.js';
 
 export const PANEL_CONTEXT = Symbol('dovetail.panel');
 
@@ -76,6 +77,14 @@ function createRuntime() {
   let locale = $state('en-US');
   let transport = $state<Transport | null>(null);
   let onPanelError: ((module: string, error: unknown) => void) | null = null;
+  let root: Document | ShadowRoot = document;
+  let hostElement: HTMLElement | null = null;
+  let hostOptions: HostOptions | null = null;
+  let location = $state.raw<LocationAdapter>(createHistoryLocation());
+  let versionPolicy: 'strict' | 'tolerant' = 'strict';
+  let prefetchEnabled = true;
+  const prefetchHeld = new Map<string, { startedAt: number; promise: Promise<Result<unknown, string>> }>();
+  const negotiatedWarned = new Set<string>();
   const panels = $state<Record<string, PanelInstance[]>>({});
   const overlays = $state<OverlayRecord[]>([]);
   const toasts = $state<ToastRecord[]>([]);
@@ -105,6 +114,20 @@ function createRuntime() {
     get onPanelError() { return onPanelError; },
     set onPanelError(value) { onPanelError = value; },
     get development() { return registry?.development ?? false; },
+    get root() { return root; },
+    set root(value) { root = value; },
+    get hostElement() { return hostElement; },
+    set hostElement(value) { hostElement = value; },
+    get hostOptions() { return hostOptions; },
+    set hostOptions(value) { hostOptions = value; },
+    get versionPolicy() { return versionPolicy; },
+    set versionPolicy(value) { versionPolicy = value; },
+    get prefetchEnabled() { return prefetchEnabled; },
+    set prefetchEnabled(value) { prefetchEnabled = value; },
+    prefetchHeld,
+    negotiatedWarned,
+    get location() { return location; },
+    set location(value) { location = value; },
     panels,
     overlays,
     toasts,
@@ -127,6 +150,28 @@ function createRuntime() {
 }
 
 export const runtime = createRuntime();
+
+export function queryRoot(selector: string): Element | null {
+  return runtime.root.querySelector(selector);
+}
+
+export function queryRootAll(selector: string): NodeListOf<Element> {
+  return runtime.root.querySelectorAll(selector);
+}
+
+export function activeElementInRoot(): Element | null {
+  return runtime.root.activeElement;
+}
+
+export function styleContainer(): Node {
+  return runtime.root instanceof ShadowRoot ? runtime.root : document.head;
+}
+
+export function hostEvent(name: string, detail: unknown): void {
+  const host = runtime.hostElement;
+  if (!host) return;
+  host.dispatchEvent(new CustomEvent(name, { detail, bubbles: true, composed: true }));
+}
 
 export function registerInstance(module: string): PanelInstance {
   if (!runtime.panels[module]) runtime.panels[module] = [];

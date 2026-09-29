@@ -3,16 +3,17 @@ require "fileutils"
 require_relative "fuse/collisions"
 require_relative "fuse/tailwind"
 require_relative "fuse/registry"
+require_relative "fuse/prefetch"
 require_relative "fuse/bind"
 require_relative "fuse/live"
 
 module Dovetail
   class Fuse
-    def self.run(app:, panel_dirs:, verify: false, out: nil, development: false, live: [])
-      new(app: app, panel_dirs: panel_dirs, verify: verify, out: out, development: development, live: live).run
+    def self.run(app:, panel_dirs:, verify: false, out: nil, development: false, live: [], embed: false)
+      new(app: app, panel_dirs: panel_dirs, verify: verify, out: out, development: development, live: live, embed: embed).run
     end
 
-    def initialize(app:, panel_dirs:, verify: false, out: nil, development: false, live: [])
+    def initialize(app:, panel_dirs:, verify: false, out: nil, development: false, live: [], embed: false)
       @app_dir = File.expand_path(app)
       @config = Dovetail::Config.find(@app_dir) || raise(Dovetail::Error.new("D-CFG-001", "no dovetail.yml found above #{@app_dir}"))
       @panel_dirs = (panel_dirs && !panel_dirs.empty? ? panel_dirs : @config.panels).map { |p| File.expand_path(p) }
@@ -20,12 +21,14 @@ module Dovetail
       @out = out ? File.expand_path(out) : @config.out
       @development = development
       @live_globs = (@config.live + Array(live)).uniq
+      @embed = embed || @config.embed
       @live_config = { "enabled" => false, "base" => @config.live_base, "moduleIds" => [], "entries" => [] }
       @report = { "panels" => [], "steps" => {}, "duration_ms" => 0 }
     end
 
     def run
       started = now_ms
+      @config.validate_embed_tag! if @embed
       generated_dir = File.join(@out, "generated")
       models = []
       shapes = {}
@@ -238,18 +241,28 @@ module Dovetail
         )
         File.write(File.join(@out, "registry.development.generated.ts"), registry_development_ts)
 
+        File.write(File.join(@out, "prefetch.json"), Dovetail::CanonicalJSON.pretty(Dovetail::Fuse::Prefetch.manifest(panel_infos.map { |p| p[:entry] }, layout)))
+
         vocabulary = Dovetail::Tokens.vocabulary
         css = Dovetail::Fuse::Tailwind.entry_css(vocabulary, @panel_dirs, @config.shell, live: @live_config["enabled"])
         File.write(File.join(@out, "app.css"), css)
 
-        { "generated" => ["registry.generated.ts", "registry.development.generated.ts", "app.css"] + panel_models.map { |m| "bind/#{m.to_h["module"]}.ts" } }
+        embed_generated = []
+        if @embed && !@live_config["enabled"]
+          File.write(File.join(@out, "embed.generated.ts"), embed_entry_source)
+          embed_generated << "embed.generated.ts"
+        end
+
+        { "generated" => ["registry.generated.ts", "registry.development.generated.ts", "prefetch.json", "app.css"] + panel_models.map { |m| "bind/#{m.to_h["module"]}.ts" } + embed_generated }
       end
 
       dir_to_module = module_dirs.each_with_object({}) { |(mod, dir), h| h[dir] = mod }
 
       build_step do
         if @config.node == false
-          { "skipped" => true }
+          result = { "skipped" => true }
+          result["embed"] = { "skipped" => "node unavailable" } if @embed
+          result
         else
           dist = File.join(@out, "dist")
           build_config = {
@@ -264,6 +277,15 @@ module Dovetail
           result = run_node_build(build_config, dist)
           if @live_config["enabled"]
             File.write(File.join(dist, ".dovetail-live.json"), JSON.generate("live_base" => @config.live_base, "root" => @config.root))
+          end
+          if @embed
+            if @live_config["enabled"]
+              result["embed"] = { "skipped" => "live components need the application's import map" }
+            else
+              tag = @config.embed_tag
+              run_node_build(embed_build_config(build_config, File.join(dist, "embed"), false), File.join(dist, "embed"))
+              result["embed"] = { "ok" => true, "path" => File.join(dist, "embed", "#{tag}.js"), "tag" => tag }
+            end
           end
           result
         end
@@ -287,6 +309,12 @@ module Dovetail
             run_node_build(verify_config, verify_dist)
             if @live_config["enabled"]
               File.write(File.join(verify_dist, ".dovetail-live.json"), JSON.generate("live_base" => @config.live_base, "root" => @config.root))
+            end
+            if @embed && !@live_config["enabled"]
+              tag = @config.embed_tag
+              run_node_build(embed_build_config(verify_config, File.join(verify_dist, "embed"), true), File.join(verify_dist, "embed"))
+              File.write(File.join(verify_dist, "embed-host.html"), embed_host_html(tag))
+              File.write(File.join(verify_dist, ".dovetail-embed.json"), JSON.generate("tag" => tag))
             end
             result = Dovetail::Verify.run(build_dir: verify_dist, screenshots_dir: File.join(@out, "screenshots"))
             if result["ok"] == false
@@ -312,6 +340,60 @@ module Dovetail
       Dir.glob(File.join(messages_dir, "*.json")).each_with_object({}) do |path, h|
         h[File.basename(path, ".json")] = path
       end
+    end
+
+    def embed_entry_source
+      [
+        "import css from '$dovetail/app.css?inline';",
+        "import App from '#{File.join(@config.shell, "App.svelte")}';",
+        "import { defineDovetailApp } from '@dovetail/runtime/embed';",
+        "defineDovetailApp('#{@config.embed_tag}', App, css);",
+        ""
+      ].join("\n")
+    end
+
+    def embed_build_config(base, out_dir, development)
+      base.merge(
+        development: development,
+        embed: {
+          enabled: true,
+          only: true,
+          tag: @config.embed_tag,
+          entry: File.join(@out, "embed.generated.ts"),
+          outDir: out_dir
+        }
+      )
+    end
+
+    def embed_host_html(tag)
+      html = <<~'HTML'
+        <!doctype html>
+        <html lang="en">
+        <head>
+        <meta charset="utf-8">
+        <title>Embed host</title>
+        <style>
+        * { box-sizing: content-box; font-family: serif }
+        body { margin: 13px }
+        button { background: rgb(255, 0, 0); border: 5px solid rgb(0, 255, 0) }
+        div { line-height: 3 }
+        #hostile-header { position: fixed; top: 0; left: 0; right: 0; height: 40px; z-index: 2147483647; background: rgb(0, 0, 0) }
+        #hostile-wrap { position: relative; z-index: 1; overflow: hidden; transform: translateZ(0); height: 320px; margin-top: 60px }
+        </style>
+        <script>
+        window.__embedReady = false;
+        document.addEventListener('dovetail-ready', function () { window.__embedReady = true; });
+        </script>
+        </head>
+        <body>
+        <div id="hostile-header"></div>
+        <button id="host-button">host</button>
+        <div id="hostile-wrap"><__TAG__></__TAG__></div>
+        <script type="module" src="./embed/__TAG__.js"></script>
+        </body>
+        </html>
+      HTML
+      html.gsub("__TAG__", tag)
     end
 
     def dovetail_root

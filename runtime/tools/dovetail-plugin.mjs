@@ -55,7 +55,8 @@ export function dovetailAliases(outDir, development = false, live = false) {
     aliases.unshift(
       { find: '@dovetail/runtime/internal', replacement: path.join(runtimeDist, 'internal.js') },
       { find: '@dovetail/runtime/components', replacement: path.join(runtimeDist, 'components.js') },
-      { find: '@dovetail/runtime/icons', replacement: path.join(runtimeDist, 'icons.js') }
+      { find: '@dovetail/runtime/icons', replacement: path.join(runtimeDist, 'icons.js') },
+      { find: '@dovetail/runtime/embed', replacement: path.join(runtimeDist, 'embed.js') }
     );
   }
   return aliases;

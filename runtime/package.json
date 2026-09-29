@@ -1,6 +1,6 @@
 {
   "name": "@dovetail/runtime",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -27,6 +27,11 @@
       "types": "./dist/icons.d.ts",
       "svelte": "./dist/icons.js",
       "default": "./dist/icons.js"
+    },
+    "./embed": {
+      "types": "./dist/embed.d.ts",
+      "svelte": "./dist/embed.js",
+      "default": "./dist/embed.js"
     }
   },
   "scripts": {

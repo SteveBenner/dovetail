@@ -31,7 +31,7 @@ reason:
 | Code | Meaning |
 | --- | --- |
 | `D-USE-001` | The command line is wrong (an unknown option, a missing argument) or a file named on it cannot be read |
-| `D-CFG-001` | No `dovetail.yml` was found above the application directory, or it or `ui/layout.yml` is not valid |
+| `D-CFG-001` | No `dovetail.yml` was found above the application directory, it or `ui/layout.yml` is not valid, or `embed_tag` is not a valid custom element name |
 | `D-CON-001` | A contract file failed to load: a syntax error, a construct the DSL does not allow, or a value outside a statement's allowed set |
 | `D-CON-002` | A contract failed validation; the C001 to C007 findings follow |
 | `D-CON-003` | A breaking change kept the same contract version |
@@ -54,9 +54,14 @@ dovetail compile <contract.rb>... --out <dir>
 ```
 
 Loads and validates the contracts together (so cross-module references and events are checked), then writes, per
-module: `schema/<module>.schema.json`, `types/<module>.d.ts`, `client/<module>.ts`, `model/<module>.model.json`, and,
+module: `schema/<module>.schema.json`, `schema-open/<module>.schema.json`, `types/<module>.d.ts`, `client/<module>.ts`, `model/<module>.model.json`, and,
 for a contract with a panel, `shape/<module>.shape.json`, `shape/<module>.brief.md` and `registry/<module>.json`. It
 prints each file written. Output is byte-identical for the same input on every supported Ruby.
+
+`schema/` holds closed schemas: every object rejects properties it does not declare. `schema-open/` holds the same
+schemas without `additionalProperties: false`, for a backend or another client that validates with a standard JSON
+Schema validator. A compatible change adds an optional field and keeps the contract version, and only the open
+schema accepts that field; see [Versioning contracts](../guides/versioning-contracts.md).
 
 ## check
 
@@ -84,7 +89,7 @@ when there are no errors, 1 when there are errors.
 ## fuse
 
 ```
-dovetail fuse --app <shell> [--panels <dir>...] [--out <dir>] [--verify] [--development] [--live <glob>...]
+dovetail fuse --app <shell> [--panels <dir>...] [--out <dir>] [--verify] [--development] [--live <glob>...] [--embed]
 ```
 
 `--app` is the shell directory (or any directory under the application); the nearest `dovetail.yml` above it
@@ -92,7 +97,9 @@ supplies the settings, and `--panels` defaults to its `panels` glob. Loads every
 types when Node is available, detects collisions between panels, generates the shell's registry, builds the
 application with Vite. With `--verify` it also builds a development bundle and runs the composition journeys against
 it. `--development` builds the main bundle as a development build. `--live <glob>` (repeatable) adds to the
-configured `live` list; see [Live components](../guides/live-components.md). Settings come from the nearest
+configured `live` list; see [Live components](../guides/live-components.md). `--embed` also builds the application
+as a custom element for other pages to host, as `embed: true` in `dovetail.yml` does; see
+[Embedding](../guides/embedding.md). Settings come from the nearest
 `dovetail.yml`; `node: false` there skips the type check and the build.
 
 `--out` names the output directory, by default `out` in `dovetail.yml` (`.dovetail`):
@@ -105,6 +112,8 @@ configured `live` list; see [Live components](../guides/live-components.md). Set
 | `<out>/screenshots` | A screenshot per failed journey |
 | `<out>/generated` | The compiled contracts (`$generated` in panel code) |
 | `<out>/dist/vendor` | With `live`, the shared Svelte and `@dovetail/runtime` modules named in the import map |
+| `<out>/dist/embed` | With `embed`, `<embed_tag>.js`, the application as one custom element |
+| `<out>/prefetch.json` | For every route, the operations the shell prefetches when it is entered |
 
 Exit 0 when fused, 1 when a check failed, 2 when the fuser could not run.
 
@@ -116,7 +125,10 @@ dovetail verify [<out>]
 
 Serves `<out>/verify-build` (by default the nearest `dovetail.yml`'s `out`) on 127.0.0.1, drives it with headless Chrome through Ferrum, and runs every composition
 journey: overlays, stacked overlays from two panels, routes, events, forced view states, unmount and remount leak
-checks, slot bounds at narrow and wide widths, and deliberate crashes. Every journey also fails on an uncaught
+checks, slot bounds at narrow and wide widths, and deliberate crashes. Every overlay it opens must be in the
+browser's top layer. When the fuse built the embed bundle, it also mounts the element in a deliberately hostile host
+page and checks the application renders, its blocking overlays escape the host's clipping, and neither side's styles
+reach the other. Every journey also fails on an uncaught
 exception, a `console.error` or an unintended failed request. Failures are printed with their journey and panel, and
 screenshots go to `<out>/screenshots`.
 
@@ -127,12 +139,25 @@ overrides the path). Exit 0 when every journey passes, 1 when one fails, 2 when 
 
 ```
 dovetail contract lint <contract.rb>...
-dovetail contract diff <old.rb> <new.rb>
+dovetail contract diff <old.rb> <new.rb> [--format text|json]
+dovetail contract compat <old.rb> <new.rb> [--format text|json]
 dovetail contract show <contract.rb>
 ```
 
 `lint` loads and validates each contract and prints `<file>: ok (<module> v<version>)`. `diff` classifies every
 change as compatible or breaking and exits 1 with `D-CON-003` when a breaking change kept the version.
+`compat` reports, for every operation and event of the old contract, whether the changes between the two versions
+leave it compatible, and which breaking changes affect it when they do:
+
+```console
+$ dovetail contract compat v1/contract.rb contract.rb
+operation findings: compatible
+operation summary: breaking (removed field 'summary.margin')
+event period_closed: compatible
+```
+
+A backend can use it to answer an older panel's call to an operation the change did not touch; see
+[Versioning contracts](../guides/versioning-contracts.md). It exits 0 when it reports and 2 when it cannot run.
 `show` prints the contract's model as JSON.
 
 ## brief

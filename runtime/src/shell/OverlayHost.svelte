@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { runtime, closeOverlayById } from './state.svelte.js';
+  import { runtime, closeOverlayById, queryRoot, activeElementInRoot } from './state.svelte.js';
+  import type { OverlayRecord } from './state.svelte.js';
   import { dismissTopDismissible } from '../seams/overlay/index.js';
   import { tInternal } from '../i18n/t.js';
   import IconButton from '../components/IconButton.svelte';
@@ -28,10 +29,10 @@
       }
       const first = items[0];
       const last = items[items.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
+      if (event.shiftKey && activeElementInRoot() === first) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
+      } else if (!event.shiftKey && activeElementInRoot() === last) {
         event.preventDefault();
         first.focus();
       }
@@ -46,6 +47,55 @@
     };
   }
 
+  function topLayer(node: HTMLElement, modal: boolean) {
+    if (node.isConnected) {
+      if (modal) (node as HTMLDialogElement).showModal();
+      else node.showPopover();
+    }
+    return {
+      destroy() {
+        if (modal) {
+          if ((node as HTMLDialogElement).open) (node as HTMLDialogElement).close();
+        } else if (node.matches(':popover-open')) {
+          node.hidePopover();
+        }
+      }
+    };
+  }
+
+  function showWhileMounted(node: HTMLElement) {
+    if (node.isConnected) node.showPopover();
+    return {
+      destroy() {
+        if (node.matches(':popover-open')) node.hidePopover();
+      }
+    };
+  }
+
+  function onDialogClose(event: Event, overlay: OverlayRecord): void {
+    const dialog = event.currentTarget as HTMLDialogElement;
+    if (!runtime.overlays.some((o) => o.id === overlay.id)) return;
+    if (overlay.dismissible) {
+      closeOverlayById(overlay.id, undefined);
+    } else {
+      queueMicrotask(() => {
+        if (dialog.isConnected && !dialog.open) dialog.showModal();
+      });
+    }
+  }
+
+  let toastRegion: HTMLElement | undefined = $state();
+  let lastToastCount = 0;
+
+  $effect(() => {
+    const count = runtime.toasts.length;
+    if (count > lastToastCount && toastRegion?.matches(':popover-open')) {
+      toastRegion.hidePopover();
+      toastRegion.showPopover();
+    }
+    lastToastCount = count;
+  });
+
   const toneIcon = {
     info: InfoIcon,
     success: CheckCircleIcon,
@@ -54,34 +104,50 @@
   };
 </script>
 
+{#snippet body(overlay: OverlayRecord)}
+  {@const OverlayComponent = overlay.component}
+  {#if overlay.dismissible && (overlay.kind === 'modal' || overlay.kind === 'drawer')}
+    <div class="dt-overlay__close">
+      <IconButton label={tInternal('dovetail.close')} icon={XIcon} variant="ghost" onclick={() => closeOverlayById(overlay.id, undefined)} />
+    </div>
+  {/if}
+  <OverlayComponent {...overlay.props} close={(result?: unknown) => closeOverlayById(overlay.id, result)} />
+{/snippet}
+
 <div class="dt-overlay-host" data-dovetail-overlay-host>
   {#each runtime.overlays as overlay (overlay.id)}
-    {@const OverlayComponent = overlay.component}
     {#if overlay.blocking}
-      <div class="dt-scrim"></div>
+      <dialog
+        class="dt-overlay dt-overlay--{overlay.kind}"
+        data-dovetail-overlay={overlay.id}
+        tabindex="-1"
+        aria-modal="true"
+        role={overlay.kind === 'menu' ? 'menu' : undefined}
+        use:topLayer={true}
+        use:trapFocus={true}
+        oncancel={(event) => event.preventDefault()}
+        onclose={(event) => onDialogClose(event, overlay)}
+      >
+        {@render body(overlay)}
+      </dialog>
+    {:else}
+      <div
+        popover="manual"
+        class="dt-overlay dt-overlay--{overlay.kind}"
+        data-dovetail-overlay={overlay.id}
+        tabindex="-1"
+        role={overlay.kind === 'menu' ? 'menu' : 'dialog'}
+        aria-modal="false"
+        use:topLayer={false}
+        use:trapFocus={false}
+      >
+        {@render body(overlay)}
+      </div>
     {/if}
-    <div
-      class="dt-overlay dt-overlay--{overlay.kind}"
-      data-dovetail-overlay={overlay.id}
-      tabindex="-1"
-      role={overlay.kind === 'menu' ? 'menu' : 'dialog'}
-      aria-modal={overlay.blocking}
-      use:trapFocus={overlay.blocking}
-      onkeydown={(event) => {
-        if (event.key === 'Escape' && overlay.dismissible) closeOverlayById(overlay.id, undefined);
-      }}
-    >
-      {#if overlay.dismissible && (overlay.kind === 'modal' || overlay.kind === 'drawer')}
-        <div class="dt-overlay__close">
-          <IconButton label={tInternal('dovetail.close')} icon={XIcon} variant="ghost" onclick={() => closeOverlayById(overlay.id, undefined)} />
-        </div>
-      {/if}
-      <OverlayComponent {...overlay.props} close={(result?: unknown) => closeOverlayById(overlay.id, result)} />
-    </div>
   {/each}
 </div>
 
-<div class="dt-toast-region" aria-live="polite">
+<div class="dt-toast-region" popover="manual" aria-live="polite" bind:this={toastRegion} use:showWhileMounted>
   {#each runtime.toasts as toast (toast.id)}
     {@const ToneIcon = toneIcon[toast.tone]}
     <div class="dt-toast dt-toast--{toast.tone}" role={toast.tone === 'danger' ? 'alert' : 'status'}>
@@ -100,15 +166,16 @@
   {/each}
 </div>
 
-<div class="dt-floating-layer" data-dovetail-floating-layer></div>
+<div class="dt-floating-layer" popover="manual" data-dovetail-floating-layer use:showWhileMounted></div>
 
 <svelte:window
   onpointerdown={(event) => {
     const top = runtime.overlays[runtime.overlays.length - 1];
     if (!top) return;
     if ((top.kind === 'popover' || top.kind === 'menu') && top.dismissible) {
-      const host = document.querySelector('.dt-overlay-host');
-      if (host && !host.contains(event.target as Node)) dismissTopDismissible();
+      const host = queryRoot('.dt-overlay-host');
+      const origin = (event.composedPath()[0] ?? event.target) as Node;
+      if (host && !host.contains(origin)) dismissTopDismissible();
     }
   }}
 />
@@ -119,21 +186,27 @@
     inset: 0;
     pointer-events: none;
   }
-  .dt-scrim {
+  .dt-overlay {
+    margin: 0;
+    inset: auto;
+    border: none;
+    padding: 0;
+    max-width: none;
+    max-height: none;
+    background: transparent;
+    color: inherit;
+    overflow: visible;
     position: fixed;
-    inset: 0;
-    background: var(--scrim);
     pointer-events: auto;
+  }
+  dialog.dt-overlay::backdrop {
+    background: var(--scrim);
     transition: opacity var(--motion-base) var(--motion-ease);
   }
-  .dt-overlay {
-    position: fixed;
-    pointer-events: auto;
-  }
   .dt-overlay--modal {
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
+    inset: 0;
+    margin: auto;
+    height: fit-content;
     width: min(calc(var(--space-1) * 140), calc(100% - 2 * var(--space-6)));
     max-height: calc(100% - 2 * var(--space-10));
     overflow: auto;
@@ -179,20 +252,29 @@
     right: var(--space-3);
   }
   .dt-toast-region {
+    inset: auto;
+    margin: 0;
+    border: none;
+    padding: 0;
+    background: transparent;
+    overflow: visible;
     position: fixed;
     bottom: var(--space-6);
     right: var(--space-6);
-    display: flex;
     flex-direction: column;
     gap: var(--space-2);
-    z-index: 1100;
     color: var(--text);
+    pointer-events: none;
+  }
+  .dt-toast-region:popover-open {
+    display: flex;
   }
   .dt-toast {
     display: flex;
     align-items: center;
     gap: var(--space-2);
     width: min(calc(var(--space-1) * 90), calc(100% - 2 * var(--space-4)));
+    pointer-events: auto;
     background: var(--surface-3);
     color: var(--text);
     border: 1px solid var(--border-strong);
@@ -214,6 +296,13 @@
   .dt-floating-layer {
     position: fixed;
     inset: 0;
+    margin: 0;
+    border: none;
+    padding: 0;
+    background: transparent;
+    width: auto;
+    height: auto;
+    overflow: visible;
     pointer-events: none;
     color: var(--text);
   }

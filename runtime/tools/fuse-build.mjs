@@ -70,30 +70,62 @@ async function main() {
     plugins.push(dovetailImportMapPlugin(buildImportMap(live)));
   }
 
-  await build({
-    root,
-    logLevel: 'warn',
-    cacheDir: path.join(out, 'vite-cache'),
-    define: {
-      'import.meta.env.VITE_DOVETAIL_BACKEND': development && config.backend ? JSON.stringify('proxy') : 'undefined'
-    },
-    resolve: {
-      alias: dovetailAliases(out, development, live.enabled)
-    },
-    plugins,
-    build: {
-      outDir: path.resolve(outDir),
-      emptyOutDir: true,
-      rollupOptions: live.enabled
-        ? {
-            external: [/^svelte(\/.*)?$/]
-          }
-        : undefined
-    }
-  });
+  const embed = config.embed && config.embed.enabled ? config.embed : null;
+  const define = {
+    'import.meta.env.VITE_DOVETAIL_BACKEND': development && config.backend ? JSON.stringify('proxy') : 'undefined'
+  };
 
-  if (live.enabled) {
-    await buildLiveVendorAssets(out, path.resolve(outDir), live);
+  if (!(embed && embed.only)) {
+    await build({
+      root,
+      logLevel: 'warn',
+      cacheDir: path.join(out, 'vite-cache'),
+      define,
+      resolve: {
+        alias: dovetailAliases(out, development, live.enabled)
+      },
+      plugins,
+      build: {
+        outDir: path.resolve(outDir),
+        emptyOutDir: true,
+        rollupOptions: live.enabled
+          ? {
+              external: [/^svelte(\/.*)?$/]
+            }
+          : undefined
+      }
+    });
+
+    if (live.enabled) {
+      await buildLiveVendorAssets(out, path.resolve(outDir), live);
+    }
+  }
+
+  if (embed) {
+    await build({
+      root,
+      logLevel: 'warn',
+      cacheDir: path.join(out, 'vite-cache'),
+      define: { ...define, 'process.env.NODE_ENV': JSON.stringify(development ? 'development' : 'production') },
+      resolve: {
+        alias: dovetailAliases(out, development, false)
+      },
+      plugins: [
+        svelte({ emitCss: false, compilerOptions: { css: 'injected' } }),
+        tailwindcss(),
+        dovetailBindingPlugin(panels, out, { enabled: false, moduleIds: [], entries: [] })
+      ],
+      build: {
+        outDir: path.resolve(embed.outDir),
+        emptyOutDir: true,
+        lib: {
+          entry: embed.entry,
+          formats: ['es'],
+          fileName: () => `${embed.tag}.js`
+        },
+        rollupOptions: { output: { inlineDynamicImports: true } }
+      }
+    });
   }
 }
 

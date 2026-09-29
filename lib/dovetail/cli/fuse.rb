@@ -12,6 +12,7 @@ module Dovetail
           out = nil
           development = false
           live = []
+          embed = false
           OptionParser.new do |o|
             o.on("--app DIR") { |v| app = v }
             o.on("--panels DIR") { |v| panels << v }
@@ -19,6 +20,7 @@ module Dovetail
             o.on("--out DIR") { |v| out = v }
             o.on("--development") { development = true }
             o.on("--live GLOB") { |v| live << v }
+            o.on("--embed") { embed = true }
           end.parse!(args)
 
           unless app
@@ -26,7 +28,7 @@ module Dovetail
           end
 
           begin
-            report = Dovetail::Fuse.run(app: app, panel_dirs: panels, verify: verify, out: out, development: development, live: live)
+            report = Dovetail::Fuse.run(app: app, panel_dirs: panels, verify: verify, out: out, development: development, live: live, embed: embed)
             stdout.puts("fused #{report["panels"].length} panels") unless Dovetail::CLI.quiet
             0
           rescue Dovetail::Error => e

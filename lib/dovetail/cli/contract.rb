@@ -12,6 +12,8 @@ module Dovetail
           lint(args, stdout: stdout, stderr: stderr)
         when "diff"
           diff(args, stdout: stdout, stderr: stderr)
+        when "compat"
+          compat(args, stdout: stdout, stderr: stderr)
         when "show"
           show(args, stdout: stdout, stderr: stderr)
         else
@@ -64,6 +66,36 @@ module Dovetail
           stderr.puts("D-CON-003 breaking change without a version increase (still v#{new_model.version})")
           1
         end
+      end
+
+      def compat(args, stdout:, stderr:)
+        format = "text"
+        parser = OptionParser.new do |o|
+          o.on("--format FORMAT") { |v| format = v }
+        end
+        files = parser.parse(args)
+        unless files.length == 2
+          stderr.puts("dovetail contract compat: needs exactly two files")
+          return 2
+        end
+        old_model = Dovetail::Contract.load_file(files[0])
+        new_model = Dovetail::Contract.load_file(files[1])
+        result = Dovetail::Negotiation.compat(old_model.to_h, new_model.to_h)
+        if format == "json"
+          stdout.puts(Dovetail::CanonicalJSON.pretty(result))
+        else
+          { "operation" => result["operations"], "event" => result["events"] }.each do |label, verdicts|
+            verdicts.keys.sort.each do |name|
+              v = verdicts[name]
+              if v["compatible"]
+                stdout.puts("#{label} #{name}: compatible")
+              else
+                stdout.puts("#{label} #{name}: breaking (#{v["breaking"].join("; ")})")
+              end
+            end
+          end
+        end
+        0
       end
 
       def show(args, stdout:, stderr:)

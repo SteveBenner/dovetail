@@ -1,5 +1,5 @@
 import { tick } from 'svelte';
-import { runtime, findPanel, closeOverlayById, nextOverlayId } from '../shell/state.svelte.js';
+import { runtime, findPanel, closeOverlayById, nextOverlayId, queryRootAll, queryRoot, activeElementInRoot } from '../shell/state.svelte.js';
 import { dispatchRouteChange } from '../seams/navigation/index.js';
 import { emitFor } from '../seams/events/index.js';
 import { fixture } from '../transport/fixtures.js';
@@ -49,7 +49,7 @@ export function installDevHooks(): void {
           component: Probe,
           props: { name },
           anchor: null,
-          openerElement: document.activeElement instanceof Element ? document.activeElement : null,
+          openerElement: activeElementInRoot(),
           resolve: (value: unknown) => resolveClosed(value),
           probe: true
         };
@@ -66,6 +66,13 @@ export function installDevHooks(): void {
       },
       close(id: string): void {
         closeOverlayById(id, undefined);
+      },
+      topLayer(id: string): 'modal' | 'popover' | 'none' {
+        const el = queryRoot(`[data-dovetail-overlay="${CSS.escape(id)}"]`);
+        if (!el) return 'none';
+        if (el.matches(':modal')) return 'modal';
+        if (el.matches(':popover-open')) return 'popover';
+        return 'none';
       }
     },
     scrollLocked(): boolean {
@@ -75,14 +82,14 @@ export function installDevHooks(): void {
       return runtime.focusTrapStack[runtime.focusTrapStack.length - 1] ?? null;
     },
     focusInside(id: string): boolean {
-      const active = document.activeElement;
+      const active = activeElementInRoot();
       return active != null && active.closest(`[data-dovetail-overlay="${CSS.escape(id)}"]`) != null;
     },
     homeModule(): string | null {
       return runtime.registry ? homeModule(runtime.registry) : null;
     },
     async navigate(path: string): Promise<void> {
-      history.pushState({}, '', path);
+      runtime.location.push(path);
       dispatchRouteChange();
       await tick();
     },
@@ -152,7 +159,7 @@ export function installDevHooks(): void {
     },
     slotRects() {
       const out: Array<{ module: string; slot: string; rect: { x: number; y: number; width: number; height: number }; scroll: { width: number; height: number } }> = [];
-      document.querySelectorAll('[data-dovetail-panel]').forEach((el) => {
+      queryRootAll('[data-dovetail-panel]').forEach((el) => {
         const module = el.getAttribute('data-dovetail-panel');
         const slot = el.getAttribute('data-slot');
         if (!module || !slot || !(el instanceof HTMLElement)) return;
@@ -167,7 +174,7 @@ export function installDevHooks(): void {
       return out;
     },
     setSlotWidth(slot: string, px: number | null): void {
-      const el = document.querySelector(`[data-slot="${slot}"]`);
+      const el = queryRoot(`[data-slot="${slot}"]`);
       if (el instanceof HTMLElement) {
         el.style.width = px == null ? '' : `${px}px`;
         el.style.flex = px == null ? '' : '0 0 auto';

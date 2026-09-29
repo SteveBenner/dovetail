@@ -49,7 +49,16 @@ module Dovetail
         page.go_to("http://127.0.0.1:#{server.port}/")
         wait_for_ready(page)
         journeys = Journeys.new(page: page, screenshots_dir: @screenshots_dir, base_url: "http://127.0.0.1:#{server.port}", panel_entries: load_panel_entries, exceptions: exceptions)
-        journeys.run_all
+        result = journeys.run_all
+        embed_tag = load_embed_tag
+        if embed_tag
+          mark = exceptions_mutex.synchronize { exceptions.length }
+          page.go_to("http://127.0.0.1:#{server.port}/embed-host.html")
+          ready = wait_for_embed(page)
+          embed_result = journeys.run_embed(tag: embed_tag, ready: ready, exceptions_from: mark)
+          result = { "ok" => result["ok"] && embed_result["ok"], "journeys" => result["journeys"] + embed_result["journeys"] }
+        end
+        result
       ensure
         browser.quit rescue nil
         server.stop
@@ -65,6 +74,23 @@ module Dovetail
         sleep 0.1
       end
       raise Dovetail::Error.new("D-VER-002", "window.__dovetail never became ready")
+    end
+
+    def load_embed_tag
+      path = File.join(@build_dir, ".dovetail-embed.json")
+      return nil unless File.file?(path)
+      require "json"
+      JSON.parse(File.read(path))["tag"]
+    rescue StandardError
+      nil
+    end
+
+    def wait_for_embed(page, attempts: 100)
+      attempts.times do
+        return true if (page.evaluate("window.__embedReady === true") rescue false)
+        sleep 0.1
+      end
+      false
     end
 
     def load_panel_entries

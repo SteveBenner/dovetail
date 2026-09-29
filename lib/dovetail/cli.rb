@@ -24,7 +24,7 @@ module Dovetail
         check [<panel_dir>] --shape <file> | <shape.json> [--require-signed] [--public-key <pem>]... [--profile strict|relaxed] [--changed <file>] [--format text|json]
         fuse --app <shell> [--panels <dir>...] [--out <dir>] [--verify] [--development] [--live <glob>...]
         verify [<out>]
-        contract lint|diff|show <file>...
+        contract lint|diff|compat|show <file>...
         brief <shape.json>
         sign <shape.json> --private-key <pem>
         new shell|panel <name>

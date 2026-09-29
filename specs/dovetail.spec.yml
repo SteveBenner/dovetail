@@ -1,11 +1,13 @@
 ---
 schema: dovetail.spec/v1
 name: dovetail
-version: 0.2.0
+version: 0.3.0
 status: draft
 recorded: '2026-09-26'
 licence: AGPL-3.0, matching Grokit (to be confirmed for the library)
-repository: bitbucket.org/paterasai/dovetail, a git submodule of grokit at dovetail/
+repository: >-
+  github.com/SteveBenner/dovetail. Grokit's dovetail/ submodule still tracks the earlier home,
+  bitbucket.org/paterasai/dovetail, which holds 0.2.0.
 summary: >
   Dovetail is a typed UI framework for fusing independently built frontend modules into one application that works
   the first time. Many developers build panels apart, synchronously or not, against one shared backend; Dovetail's
@@ -262,7 +264,21 @@ compiler:
     form: >-
       JSON Schema draft 2020-12, one $defs entry per type, one schema per operation input and output and per event
       payload.
-    use: Runtime validation on the server and, in development builds, in the browser.
+    use: >-
+      Runtime validation on the server and, in development builds, in the browser. Every object type is closed
+      (additionalProperties false). The browser validator checks declared properties only and ignores extra ones,
+      so a response carrying a field a compatible change added still validates there.
+  - id: json_schema_open
+    path: "<out>/schema-open/<module>.schema.json"
+    form: >-
+      The json_schema output with every additionalProperties false removed, so every object accepts properties it
+      does not declare. additionalProperties given as a schema (the value schema of a map) is kept. Cross-module
+      $ref values keep their <module>.schema.json file names and resolve inside schema-open/.
+    use: >-
+      For consumers outside Dovetail (a backend, a third-party client, a contract test in another language) that
+      validate with a standard JSON Schema validator. A compatible change keeps the contract version (see
+      versioning); validating against the closed schema would reject the optional field such a change adds,
+      so outside consumers validate against this variant.
   - id: typescript
     path: "<out>/types/<module>.d.ts"
     form: One exported type per contract type, a union type of the module's events, and the panel's Props type.
@@ -961,6 +977,15 @@ composition_verifier:
   - >-
     Crash each panel deliberately through the development hook; check the fallback renders and every other panel
     still responds.
+  - >-
+    Every overlay the overlay journeys open is in the top layer: a blocking one matches :modal and any other matches
+    :popover-open.
+  - >-
+    When the fuse built the embed bundle, load a host page that mounts the element inside a wrapper with overflow
+    hidden, a transform and a low z-index, beneath a fixed header with the highest z-index, with hostile global
+    styles on button, div and *; check the home route renders inside the shadow root, every panel's first declared
+    blocking overlay opens as :modal and its rectangle is not clipped by the wrapper, the host's own button keeps
+    its computed background and the host body keeps its margin, and the element dispatched dovetail-ready.
   assertions_global:
   - no uncaught exceptions
   - no console.error
@@ -1050,13 +1075,18 @@ cli:
   - name: fuse
     synopsis: >-
       dovetail fuse --app <shell> [--panels <dir>...] [--out <dir>] [--verify] [--development] [--live <glob>...]
+      [--embed]
     purpose: Check and assemble the application
   - name: verify
     synopsis: dovetail verify [<out>]
     purpose: Run the composition journeys
   - name: contract
-    synopsis: dovetail contract lint|diff|show <file>
-    purpose: Validate a contract, classify changes between two versions, or print its model
+    synopsis: >-
+      dovetail contract lint <file>... | diff <old> <new> [--format text|json] | compat <old> <new> [--format
+      text|json] | show <file>
+    purpose: >-
+      Validate a contract, classify changes between two versions, report which operations and events a version
+      change leaves compatible (see negotiation), or print its model
   - name: brief
     synopsis: dovetail brief <shape.json>
     purpose: Print the brief
@@ -1110,6 +1140,149 @@ live_components:
     never cached. dovetail verify's StaticServer does this for a live build automatically, from a manifest fuse
     writes beside the build.
   performance: The first live component renders within 2 seconds of navigation; later ones reuse the loaded compiler.
+embedding:
+  purpose: >-
+    A fused application can be placed inside any other web page, whatever that page is built with (React, Vue,
+    Angular, a server-rendered template or plain HTML), as one custom element. The host needs no Svelte, no build
+    step of its own and no iframe.
+  configuration: >-
+    dovetail.yml gains embed (Boolean, default false) and embed_tag (the element's tag name, default dovetail-app).
+    dovetail fuse gains --embed, which turns embed on for one run. embed_tag must be a valid custom element name:
+    lowercase ASCII letters, digits and hyphens, starting with a letter, containing at least one hyphen, not starting
+    or ending with a hyphen, with no two hyphens in a row, and not one of the names HTML reserves (annotation-xml,
+    color-profile, font-face, font-face-src, font-face-uri, font-face-format, font-face-name, missing-glyph). An
+    invalid tag fails with D-CFG-001.
+  build: >-
+    With embed on and no live globs, fuse builds a second bundle beside the application: <out>/dist/embed/<tag>.js,
+    one ES module (with any chunks it splits into beside it) that defines the element when it is imported. It is
+    built from the production registry and the shell's own App.svelte, so the embedded application is the same
+    application. Its stylesheet (the fused app.css and every component's styles) is carried inside the module and
+    applied inside the element's shadow root, never to the host document. With live globs, the embed build is
+    skipped and the fuse report records embed as skipped with the reason, because a live build depends on an import
+    map in the application's own index.html. With embed off, fuse is unchanged.
+  element:
+    tag: embed_tag, default dovetail-app.
+    shadow_root: >-
+      Open. The host page's stylesheets do not reach inside it and Dovetail's stylesheet, including Tailwind's
+      preflight, does not reach out of it. The element itself is display block; the host sizes and places it.
+    attributes:
+      theme: The id of one of the application's themes; default the first theme. Changing it re-themes live.
+      locale: The active locale code; default en-US. Changing it re-renders messages.
+      routing: >-
+        memory (default) or history. In memory, the application keeps its own route and never reads or writes
+        the host's URL. In history, it owns the host page's path exactly as a standalone Dovetail application does.
+      path: >-
+        The route to show, in memory routing. Read when the element connects (default /, which shows the home
+        module's first route) and followed whenever the host changes it. Ignored in history routing.
+      api-base: The base URL the HTTP transport calls; default the empty string (the host page's own origin).
+      version-policy: strict (default) or tolerant; see negotiation.
+      prefetch: Present and not "false" (default) or "false"; see prefetch.
+    events: >-
+      Dispatched on the element, bubbling and composed: dovetail-ready once the shell has mounted;
+      dovetail-route with detail {path, module} after every route change; dovetail-panel-error with detail
+      {module, message} when a panel's boundary catches an error.
+    lifecycle: >-
+      The application mounts when the element connects and unmounts when it disconnects, releasing every listener,
+      stream, timer and overlay. Reconnecting mounts it afresh.
+    instances: >-
+      One element of a given tag may be connected at a time, because the runtime inside one embed bundle is one
+      instance. A second element of the same tag renders nothing and logs D-RUN-007 once. Two applications built with
+      different embed_tag values each carry their own runtime and may share a page.
+  scoping: >-
+    The shell's document-level work is scoped to the element when embedded: its click, keydown and pointerdown
+    listeners attach to the shadow root, its theme style element is placed in the shadow root, the overlay host,
+    the floating layer and the development hooks look up elements inside the shadow root, and the active element is
+    read from the shadow root. A standalone application scopes the same work to the document, as before. The scroll
+    lock a blocking overlay takes stays on the host document's root element.
+  hosting: >-
+    The host serves <out>/dist/embed/ as static files and adds <script type="module" src=".../<tag>.js"> and the
+    element to its page. Cross-origin calls to api-base need the backend's CORS headers; Dovetail adds none.
+top_layer_overlays:
+  purpose: >-
+    Overlays, toasts and tooltips render in the browser's top layer, so no ancestor's z-index, transform, filter,
+    contain or overflow can hide, clip or cover them, in a standalone application or inside a host page.
+  blocking: >-
+    A blocking overlay renders as a dialog element opened with showModal(). The browser makes the rest of the page
+    inert and puts the dialog above everything else; its ::backdrop is the scrim, coloured with the scrim token.
+    The dialog's cancel event is always prevented, so the browser never closes an overlay by itself; Escape is
+    handled once, by the shell's keydown listener, which closes the topmost dismissible overlay as before.
+  non_blocking: >-
+    A non-blocking overlay (a popover, a menu, or a non-blocking modal or drawer) renders as an element with
+    popover="manual", shown with showPopover(), so it is in the top layer without making the page inert. Outside
+    clicks still close a dismissible popover or menu; the click's real target is read from event.composedPath() so
+    the check also works inside a shadow root.
+  toasts: >-
+    The toast region is a popover="manual" element, shown while any toast exists and re-shown when a toast is added
+    so it sits above overlays opened before it. Under an open blocking overlay a toast is announced and visible but
+    its dismiss control is inert until the overlay closes; toasts still expire on their own.
+  floating_layer: >-
+    The floating layer tooltips render into is a popover="manual" element shown while the shell is mounted. A
+    tooltip whose trigger sits inside an open overlay renders into that overlay's element instead, so it stays
+    above the overlay and is not made inert by it.
+  placement: >-
+    Every overlay keeps the size, position, border, padding and elevation it had in 0.2.0; the user agent's default
+    dialog and popover margins, insets, borders, padding and maximum sizes are reset.
+  unchanged: >-
+    Stacking order is the order overlays opened; focus moves into an overlay when it opens and returns to its opener
+    when it closes; a blocking overlay traps Tab; the development hooks, the focus trap stack and
+    data-dovetail-overlay are unchanged.
+prefetch:
+  purpose: >-
+    The data each visible panel needs starts loading when a route is entered, in parallel, before the panels' own
+    code runs, so a page of many independent panels loads in one round of requests rather than a cascade.
+  eligibility: >-
+    An operation is prefetchable when it is the data operation of one of its panel's views, its input is empty
+    (input: {}), and it is idempotent: true. Nothing else is ever prefetched, because only such a call has no input
+    to guess and can be repeated safely.
+  registry: Each registry entry carries prefetch, the sorted list of its prefetchable operation names.
+  manifest: >-
+    fuse writes <out>/prefetch.json (schema dovetail.prefetch/v1): for every declared route of every panel, and for
+    /, the prefetchable operations (as <module>.<operation>) of every panel placed on that route, using the same
+    placement the shell uses: the route's own panel in main, full and aside slots, the home module's tile panels on
+    the home module's routes and on /, and dock panels everywhere. A backend or an edge can use it to warm caches or
+    send early hints; the runtime does not read it.
+  runtime: >-
+    On every route change the shell computes the panels placed on the new route and calls each prefetchable
+    operation through the transport, in parallel, holding each pending result for 5 seconds. The generated client's
+    first call to that operation with an empty input within that time takes the held result instead of calling
+    again; a held result is used at most once. Every call still passes through the transport's rate limiter,
+    in-flight cap, circuit breaker and timeouts, so a prefetch can never exceed what the panels' own calls may.
+  toggle: >-
+    DovetailShell takes prefetch (Boolean, default true); the embed element takes the prefetch attribute. With
+    prefetch off, nothing is prefetched and the client calls the transport directly, as in 0.2.0.
+negotiation:
+  purpose: >-
+    Panels and backends that are deployed separately keep working across a version change that does not touch
+    what a given call uses.
+  compat: >-
+    dovetail contract compat <old.rb> <new.rb> reports, for every operation and event of the old contract, whether
+    the changes between the two versions leave it compatible: an operation is affected when a breaking change
+    names it, its input or output, or any type its input or output reaches through named types, lists, maps,
+    one_of and refs within the contract; an event is affected the same way through its payload. The text form prints
+    one line per operation and event; the JSON form (dovetail.compat/v1) gives from, to, and for each operation and
+    event compatible and the breaking changes that affect it. It exits 0 when it reports, and 2 on a usage error or
+    when a file cannot be loaded, as contract diff does. The same result is available in Ruby as Dovetail::Negotiation.compat(old_model_hash,
+    new_model_hash), standard library only, for a Ruby backend to build its answer table from.
+  server: >-
+    A server at version N that receives X-Dovetail-Contract <module>@M, with M below N, may answer the call when
+    compat reports the operation compatible between M and N. It answers {status: ok, data, contract_version: N,
+    negotiated: {requested: M, served: N}}. Otherwise it answers contract_version_mismatch as before, and may add
+    supported_versions, the list of contract versions it can answer that operation for.
+  client: >-
+    A response at the version the panel was built for is accepted as before. A response at another version is
+    accepted only when it is ok, and either carries negotiated.requested equal to the panel's version, or the version
+    policy is tolerant; and in both cases its data validates against the panel's own output schema for that
+    operation. An accepted response's Result carries negotiated {requested, served}. Anything else is a
+    contract_version_mismatch error result, carrying supported_versions when the server sent them and the path of
+    the first validation failure when there was one. In a development build each accepted negotiated response
+    logs D-RUN-008 once per operation.
+  events: >-
+    A server event at another version than its producer's is delivered only under the tolerant policy and only when
+    its payload validates against the producer's payload schema in the registry; otherwise it is dropped as before.
+  policy: >-
+    strict (default) or tolerant, set by DovetailShell's versionPolicy prop or the embed element's version-policy
+    attribute. strict accepts a response at another version only when the server declared the negotiation; tolerant
+    also accepts one the server did not declare, when it validates.
 compatibility:
   ruby: The contract runtime, compiler, checker and fuser run on Ruby 2.6.10 through 4.0.x; CI runs both ends.
   node: >-
@@ -1166,6 +1339,10 @@ runtime_api:
         locale: The active locale code.
         transport: A Transport implementation.
         onPanelError: "(module, error) => void, called when a panel's boundary catches an error"
+        routing: "history (default) or memory; see embedding"
+        initialPath: The first route in memory routing (default /)
+        versionPolicy: "strict (default) or tolerant; see negotiation"
+        prefetch: "Boolean, default true; see prefetch"
       behaviour:
       - Renders the shell layout and mounts each registered panel into its slots inside an error boundary.
       - Owns the overlay host, the event bus, the router, the shortcut registry and the toast queue.
@@ -1380,8 +1557,8 @@ wire_protocol:
       X-Request-Id: a UUID
     body: The operation input as JSON.
   response:
-    ok: "{status: ok, data, contract_version}"
-    error: "{status: error, errors: [{code, message, path?}], contract_version}"
+    ok: "{status: ok, data, contract_version, negotiated?: {requested, served}}"
+    error: "{status: error, errors: [{code, message, path?}], contract_version, supported_versions?}"
     codes:
     - invalid_input
     - contract_violation
@@ -1398,7 +1575,8 @@ wire_protocol:
       {"payload": {...}, "contract_version": N}.
   version_negotiation: >-
     The server compares X-Dovetail-Contract with the module's current version and answers contract_version_mismatch
-    with both versions when a breaking change separates them.
+    with both versions when a breaking change separates them. A server may instead answer an older version's call
+    that dovetail contract compat reports compatible, marking the response negotiated; see negotiation.
 agent_integration:
   purpose: How an AI coding agent (Reach's, or any other) works with Dovetail.
   inputs_to_agent:
@@ -1703,6 +1881,8 @@ configuration_file:
     node: Path to a Node binary, or false to skip the build and type check
     live: Globs (relative to the application root) of component files to load live instead of bundling (default empty)
     live_base: URL path prefix live sources are fetched from (default /live/)
+    embed: Boolean, default false; also build the application as an embeddable custom element (see embedding)
+    embed_tag: The embeddable element's tag name (default dovetail-app)
   example: |
     contracts: modules/*/contract.rb
     panels: modules/*/panel
@@ -1849,6 +2029,14 @@ error_codes:
 - code: D-RUN-006
   where: runtime
   meaning: A panel crashed and is in its fallback
+- code: D-RUN-007
+  where: runtime
+  meaning: A second embed element of the same tag connected while one was mounted; it renders nothing
+- code: D-RUN-008
+  where: runtime
+  meaning: >-
+    A response or server event at another contract version was accepted after negotiation or validation
+    (development builds only, once per operation or event)
 event_bus_semantics:
   identity: An event id is <module>.<name>; payload types come from the emitting module's contract.
   delivery: Synchronous, in subscription order, to subscribers in every mounted panel that declared the event in
@@ -2609,3 +2797,51 @@ implementation_decisions:
     Every runtime icon that sits beside a text label is aria-hidden, so axe's svg-img-alt stays clean. A Tooltip's
     hide and a NumberInput's blur normalisation run in a microtask, because a focused element removed during a render
     fires blur inside Svelte's flush, where changing state throws state_unsafe_mutation.
+- date: '2026-09-28'
+  topic: embed build and the fuse report
+  decision: >-
+    The embed build runs inside the build step, after the application bundle, and the report's build section gains
+    embed: {ok: true, path, tag} when it ran, {skipped: reason} when embed is on but live globs are set or node is
+    false, and no embed key when embed is off. A failed embed build is D-FUS-004, like the application build.
+    prefetch.json is written by the generate step and listed in its generated files.
+- date: '2026-09-28'
+  topic: embed styles
+  decision: >-
+    The embed bundle compiles Svelte components with injected CSS, which Svelte appends to the root node the
+    component mounts in, so inside the element every component's styles land in the shadow root. The fused app.css
+    is imported as a string and placed in a style element at the top of the shadow root, before the application
+    mounts. The shadow root's host rule sets display block.
+- date: '2026-09-28'
+  topic: one runtime, one root
+  decision: >-
+    The runtime state gains root (the Document or the ShadowRoot the shell lives in) and the element that hosts an
+    embedded application. Every lookup that used document.querySelector, document.activeElement or a
+    document-level listener now goes through the root, and the theme style element goes into document.head for a
+    Document root and into the ShadowRoot otherwise. A standalone application's root is the document, so its
+    behaviour is unchanged.
+- date: '2026-09-28'
+  topic: routing through an adapter
+  decision: >-
+    The navigation seam reads and writes the current path through a location adapter in runtime state. The history
+    adapter uses location and history as 0.2.0 did and listens for popstate; the memory adapter keeps the path and
+    query in state and never touches the host's URL. The shell's link interception and the development hooks'
+    navigate go through the adapter.
+- date: '2026-09-28'
+  topic: Escape and the native dialog
+  decision: >-
+    0.2.0 closed an overlay on Escape both in the overlay's own keydown handler and in the shell's document keydown
+    handler, so one Escape could close two stacked dismissible overlays. With native dialogs the per-overlay handler
+    is removed and the dialog's cancel event is prevented, leaving one Escape to close one overlay, the topmost
+    dismissible one. Chrome's close watcher can still fire cancel at the dialog left on top after the first one is
+    removed, and ignores a prevented cancel when there was no user activation, so the shell's keydown listener also
+    calls preventDefault on the Escape keydown whenever it dismissed an overlay, which stops the browser's own
+    dialog handling for that key press. A blocking overlay now sits above the development toolbar, which is inert
+    while it is open.
+- date: '2026-09-28'
+  topic: prefetch hold
+  decision: >-
+    Held prefetch results live in runtime state keyed <module>.<operation>, each with the time it was started. A
+    route change starts a prefetch only for an operation that has no fresh held result, so returning to a route
+    within 5 seconds does not call twice. The development transport takes part in prefetch like any other, so the
+    composition journeys exercise it. The shell starts prefetch from an $effect.pre, which runs before the panels'
+    own effects; a plain $effect would run after a panel's first call and never be taken.

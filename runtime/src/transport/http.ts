@@ -1,4 +1,6 @@
 import { connectEventStream } from './sse.js';
+import { runtime } from '../shell/state.svelte.js';
+import { validate } from '../validate/jsonschema.js';
 import type { CallOptions, CommonErrorCode, Result, ServerEventMessage, Transport } from '../types.js';
 
 export interface BreakerOptions {
@@ -215,15 +217,48 @@ export function createHttpTransport(options: HttpTransportOptions = {}): Transpo
         data?: unknown;
         errors?: Array<{ code: string; message: string; path?: string }>;
         contract_version: number;
+        negotiated?: { requested?: number; served?: number };
+        supported_versions?: unknown;
       };
       if (body.contract_version !== callOptions.contract_version) {
+        let firstPath: string | undefined;
+        if (
+          body.status === 'ok' &&
+          (body.negotiated?.requested === callOptions.contract_version || runtime.versionPolicy === 'tolerant')
+        ) {
+          const schema = runtime.registry?.panels
+            .find((p) => p.module === module)
+            ?.operations.find((o) => o.name === operation)?.output_schema;
+          if (schema) {
+            const errors = validate(schema, body.data);
+            if (errors.length === 0) {
+              return {
+                result: {
+                  ok: true,
+                  data: body.data,
+                  contract_version: body.contract_version,
+                  negotiated: { requested: callOptions.contract_version, served: body.contract_version }
+                },
+                statusForBreaker: 'ok',
+                httpStatus: status
+              };
+            }
+            firstPath = errors[0].path;
+          }
+        }
+        const supported =
+          Array.isArray(body.supported_versions) && body.supported_versions.every((v) => typeof v === 'number')
+            ? (body.supported_versions as number[])
+            : undefined;
         return {
           result: {
             ok: false,
             error: {
               code: 'contract_version_mismatch',
               message: 'contract version mismatch',
-              versions: { expected: callOptions.contract_version, actual: body.contract_version }
+              versions: { expected: callOptions.contract_version, actual: body.contract_version },
+              ...(firstPath !== undefined ? { path: firstPath } : {}),
+              ...(supported ? { supported_versions: supported } : {})
             }
           },
           statusForBreaker: 'contract_version_mismatch',

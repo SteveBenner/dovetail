@@ -24,7 +24,9 @@ module Dovetail
       models.each do |model|
         mod = model.module_id
 
-        written << write_file(out, "schema/#{mod}.schema.json", Dovetail::CanonicalJSON.pretty(JsonSchema.generate(model)))
+        schema = JsonSchema.generate(model)
+        written << write_file(out, "schema/#{mod}.schema.json", Dovetail::CanonicalJSON.pretty(schema))
+        written << write_file(out, "schema-open/#{mod}.schema.json", Dovetail::CanonicalJSON.pretty(JsonSchema.open(schema)))
         written << write_file(out, "types/#{mod}.d.ts", Typescript.generate(model, by_id))
         written << write_file(out, "client/#{mod}.ts", Client.generate(model))
 

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { setContext, untrack } from 'svelte';
   import type { RegistryPanel } from '../types.js';
-  import { runtime, registerInstance, unregisterInstance, closeOverlayById, type PanelInstance } from './state.svelte.js';
+  import { runtime, registerInstance, unregisterInstance, closeOverlayById, hostEvent, type PanelInstance } from './state.svelte.js';
   import { HEADING_CONTEXT } from './heading-context.js';
   import FallbackCard from './FallbackCard.svelte';
   import CrashTrigger from './CrashTrigger.svelte';
@@ -47,6 +47,7 @@
     }
     releaseHandlers();
     runtime.onPanelError?.(panel.module, error);
+    hostEvent('dovetail-panel-error', { module: panel.module, message: errorSummary });
     if (runtime.development) {
       console.warn(`D-RUN-006 ${panel.module} crashed: ${errorSummary}`);
     }

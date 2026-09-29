@@ -4,6 +4,53 @@ All notable changes to Dovetail are recorded here. The project follows [Semantic
 rule ids are stable, the shape schema changes only with a new schema id, and the runtime's exported API follows
 semver.
 
+## [0.3.0] - 2026-09-28
+
+### Added
+
+- **Embedding.** `dovetail.yml` gains `embed` and `embed_tag` (default `dovetail-app`); `dovetail fuse` gains
+  `--embed`. The fuse also builds `<out>/dist/embed/<embed_tag>.js`, the whole application as one custom element with
+  an open shadow root, so any page (React, Vue, a server template, plain HTML) can host it without Svelte, a build
+  step or an iframe. Attributes `theme`, `locale`, `routing` (`memory` by default, or `history`), `path`, `api-base`,
+  `version-policy` and `prefetch`; events `dovetail-ready`, `dovetail-route` and `dovetail-panel-error`. Host styles
+  do not reach in and Dovetail's styles, including its reset, do not reach out. One element per tag may be mounted
+  (`D-RUN-007`). An invalid `embed_tag` fails with `D-CFG-001`; a live build skips the embed build and says why. See
+  [Embedding](docs/guides/embedding.md).
+- **Open schemas.** `dovetail compile` also writes `schema-open/<module>.schema.json`, the same schemas without
+  `additionalProperties: false`, for backends and other clients that validate with a standard JSON Schema validator
+  and must accept the optional fields a compatible change adds.
+- **`dovetail contract compat <old> <new> [--format text|json]`** and `Dovetail::Negotiation.compat`: for every
+  operation and event of the old contract, whether the changes between two versions leave it compatible, following
+  every type its input, output or payload reaches.
+- **Negotiated responses.** A server may answer an older version's call to a compatible operation with
+  `negotiated: {requested, served}`; the runtime accepts it after validating the data against the panel's own output
+  schema, and the result carries `negotiated`. A `contract_version_mismatch` may carry `supported_versions`.
+  `DovetailShell` gains `versionPolicy` (`strict` by default; `tolerant` also accepts undeclared responses and server
+  events at another version when they validate). Development builds log `D-RUN-008` once per accepted operation or
+  event.
+- **Prefetch.** Registry entries carry `prefetch`, the view data operations that take no input and are idempotent.
+  On every route change the shell starts them for every panel placed on the route, in parallel and through the
+  transport's limits; a panel's first call within 5 seconds takes the held result. `DovetailShell` gains `prefetch`
+  (default `true`). The fuse writes `<out>/prefetch.json`, the operations per route, for backends and edges.
+- `DovetailShell` gains `routing` and `initialPath`; a `memory` route never touches the page URL.
+- Development hook `overlays.topLayer(id)`.
+- Composition journeys: every overlay must be in the top layer, and with `embed` the element is checked in a
+  deliberately hostile host page.
+
+### Changed
+
+- **Overlays render in the browser's top layer.** A blocking overlay is a native modal `dialog` with the scrim as its
+  backdrop; other overlays, the toast region and the tooltip layer are manual popovers. No ancestor's `z-index`,
+  transform or `overflow` can clip or cover them. Overlays keep their size, placement and styling; the modal centres
+  without a transform.
+- The shell's listeners, theme style, overlay and tooltip lookups and active-element reads are scoped to the root the
+  application lives in (the document, or the embed element's shadow root). Routing goes through a location adapter.
+
+### Fixed
+
+- One Escape press closed two stacked dismissible overlays, because both the overlay and the shell handled it. It now
+  closes exactly one, the topmost dismissible overlay.
+
 ## [0.2.0] - 2026-09-28
 
 ### Added

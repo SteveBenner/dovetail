@@ -15,7 +15,7 @@ sections below except `toast`) throw `Dovetail: <name> was called outside a pane
 
 ## Shell
 
-### `<DovetailShell registry theme locale transport onPanelError>`
+### `<DovetailShell registry theme locale transport onPanelError routing initialPath versionPolicy prefetch>`
 
 The root host. It lays out the shell, mounts each registered panel into its slots inside an error boundary, and owns
 the overlay host, the event bus, the router, the shortcut registry and the toast queue. It applies the theme's tokens
@@ -28,6 +28,13 @@ as CSS custom properties on its root element.
 | `locale` | A locale code, default `en-US` |
 | `transport` | `createHttpTransport(...)` or `createDevelopmentTransport()` |
 | `onPanelError` | `(module, error) => void`, called when a panel's boundary catches an error |
+| `routing` | `history` (default): the application owns the page's path. `memory`: it keeps its own route and never touches the URL |
+| `initialPath` | The first route in `memory` routing, default `/` |
+| `versionPolicy` | `strict` (default) or `tolerant`; see [Data](#data) |
+| `prefetch` | Default `true`; see [Data](#data) |
+
+When the application runs inside its embed element, the element's attributes override `theme`, `locale`, `routing`,
+`initialPath`, `versionPolicy`, `prefetch` and the transport's base URL; see [Embedding](../guides/embedding.md).
 
 ### `<Slot name>`
 
@@ -105,6 +112,11 @@ toast(message, { tone?: 'info' | 'success' | 'warning' | 'danger', duration_ms?:
 anchor>` is the declarative form; `anchor` places popovers and menus. Opening a name the contract does not declare
 is `D-RUN-001` in development.
 
+Overlays render in the browser's top layer, so nothing in the page, and nothing in a page hosting the application,
+can clip or cover them. A blocking overlay is a native modal `dialog`: the browser makes the rest of the page inert
+and draws the scrim as its backdrop. Every other overlay, the toast region and the tooltip layer are manual popovers.
+Escape closes the topmost dismissible overlay, once per press.
+
 ## Navigation
 
 ```ts
@@ -151,6 +163,18 @@ Each function returns a `Result`: `{ ok: true, data, contract_version }` or `{ o
 path?, retry_after_s? } }`. It never throws for an expected failure. The codes every call can return are
 `invalid_input`, `contract_violation`, `not_found`, `unavailable`, `not_built`, `contract_version_mismatch`,
 `rate_limited` and `internal`, plus the operation's own `errors`.
+
+A response at another contract version than the panel's is accepted only when it is ok and its data validates
+against the panel's own output schema, and then only when the server declared the negotiation (`negotiated` in the
+response) or the shell's `versionPolicy` is `tolerant`. The result then carries `negotiated: { requested, served }`.
+Otherwise it is a `contract_version_mismatch` error, with the server's `supported_versions` when it sent them. The
+same policy applies to server events at another version. In development, each accepted response or event at another
+version logs `D-RUN-008` once. See [Versioning contracts](../guides/versioning-contracts.md).
+
+When a route is entered, the shell starts the data operation of every view of every panel placed on it, when that
+operation takes no input and is idempotent, all in parallel. The panel's own first call to it within five seconds
+takes that result instead of calling again. Every call still goes through the transport's rate limits and circuit
+breaker. `prefetch={false}` on the shell turns this off.
 
 ## Keyboard
 
@@ -231,7 +255,10 @@ A request is `POST /api/v1/modules/<module>/<operation>` with the input as JSON 
 | `X-Request-Id` | a UUID |
 
 A response is `{ "status": "ok", "data": ..., "contract_version": N }` or `{ "status": "error", "errors": [{ "code",
-"message", "path" }], "contract_version": N }`.
+"message", "path" }], "contract_version": N }`. A server answering an older version's call that `dovetail contract
+compat` reports compatible adds `"negotiated": { "requested": M, "served": N }` to the ok response. A
+`contract_version_mismatch` error may add `"supported_versions": [...]`, the versions the server can answer that
+operation for.
 
 Server events arrive as Server-Sent Events from `/api/v1/events`. Each message has an `id`, an `event` field naming
 the event id (`<module>.<event>`), and `data` holding `{ "payload": ..., "contract_version": N }`.
@@ -241,4 +268,5 @@ the event id (`<module>.<event>`), and `data` holding `{ "payload": ..., "contra
 Development builds expose `window.__dovetail`, which the development toolbar and `dovetail verify` drive: the mounted
 panels, open overlays, route and event logs, forced view states, mount and unmount, leak counters, deliberate crashes,
 slot rectangles and transport statistics, where focus sits inside an overlay (`focusInside(id)`) and which module owns
-the home route that tile slots render on (`homeModule()`). Production builds do not include it.
+the home route that tile slots render on (`homeModule()`), and whether an overlay is in the top layer
+(`overlays.topLayer(id)`, answering `modal`, `popover` or `none`). Production builds do not include it.

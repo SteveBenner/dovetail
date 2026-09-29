@@ -23,10 +23,16 @@ export interface DovetailErrorValue<E extends string = never> {
   readonly path?: string;
   readonly retry_after_s?: number;
   readonly versions?: { readonly expected: number; readonly actual: number };
+  readonly supported_versions?: readonly number[];
 }
 
 export type Result<T, E extends string = never> =
-  | { readonly ok: true; readonly data: T; readonly contract_version: number }
+  | {
+      readonly ok: true;
+      readonly data: T;
+      readonly contract_version: number;
+      readonly negotiated?: { readonly requested: number; readonly served: number };
+    }
   | { readonly ok: false; readonly error: DovetailErrorValue<E>; readonly contract_version?: number };
 
 export interface CallOptions {
@@ -89,6 +95,7 @@ export interface RegistryPanel {
   readonly storage_keys: ReadonlyArray<{ name: string; ttl_days: number | null; schema: JsonSchema }>;
   readonly emits: ReadonlyArray<{ id: string; payload_schema: JsonSchema }>;
   readonly consumes: readonly string[];
+  readonly prefetch: readonly string[];
   readonly operations: ReadonlyArray<{
     id: string;
     name: string;
@@ -116,4 +123,23 @@ export interface Registry {
   readonly panels: readonly RegistryPanel[];
   readonly schemas: Readonly<Record<string, JsonSchema>>;
   readonly messages: Readonly<Record<string, Readonly<Record<string, string>>>>;
+}
+
+export interface HostOptions {
+  theme?: string;
+  locale?: string;
+  routing?: 'history' | 'memory';
+  path?: string;
+  apiBase?: string;
+  versionPolicy?: 'strict' | 'tolerant';
+  prefetch?: boolean;
+}
+
+export interface LocationAdapter {
+  readonly mode: 'history' | 'memory';
+  path(): string;
+  search(): string;
+  push(path: string): void;
+  replace(path: string): void;
+  listen(onChange: () => void): () => void;
 }

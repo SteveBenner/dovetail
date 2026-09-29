@@ -13,6 +13,20 @@ module Dovetail
         "Email" => { "type" => "string", "format" => "email" }
       }.freeze
 
+      def open(schema)
+        case schema
+        when Hash
+          schema.each_with_object({}) do |(k, v), h|
+            next if k == "additionalProperties" && v == false
+            h[k] = self.open(v)
+          end
+        when Array
+          schema.map { |v| self.open(v) }
+        else
+          schema
+        end
+      end
+
       def generate(model)
         defs = {}
         model.types.each do |name, type|

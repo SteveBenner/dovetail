@@ -32,6 +32,41 @@ module Dovetail
         { "ok" => failures.empty?, "journeys" => failures }
       end
 
+      def run_embed(tag:, ready:, exceptions_from:)
+        failures = []
+        unless ready
+          record(failures, "embed", tag, "the element never dispatched dovetail-ready")
+          return { "ok" => false, "journeys" => failures }
+        end
+        selector = "document.querySelector('#{tag}').shadowRoot"
+        mounted = safe_eval("Array.from(#{selector}.querySelectorAll('[data-dovetail-panel]')).map(function (el) { return el.getAttribute('data-dovetail-panel'); })") || []
+        if mounted.empty?
+          record(failures, "embed", tag, "no panel rendered inside the shadow root")
+        end
+        mounted.uniq.each do |mod|
+          overlay = panel_overlays(mod).find { |o| o["blocking"] }
+          next unless overlay
+          id = safe_eval_async("window.__dovetail.overlays.open('#{mod}', '#{overlay["name"]}')")
+          unless id
+            record(failures, "embed", mod, "could not open overlay #{overlay["name"]}")
+            next
+          end
+          top = safe_eval("window.__dovetail.overlays.topLayer('#{id}')")
+          record(failures, "embed", mod, "overlay #{overlay["name"]} is not in the top layer") unless top == "modal"
+          covered = safe_eval("(function () { var root = #{selector}; var el = root.querySelector('[data-dovetail-overlay=\"#{id}\"]'); if (!el) return false; var r = el.getBoundingClientRect(); var hit = root.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return hit != null && el.contains(hit); })()")
+          record(failures, "embed", mod, "overlay #{overlay["name"]} is clipped or covered by the host page") unless covered == true
+          safe_eval("window.__dovetail.overlays.close('#{id}')")
+        end
+        button = safe_eval("getComputedStyle(document.getElementById('host-button')).backgroundColor")
+        record(failures, "embed", tag, "the host page's button lost its background (#{button})") unless button == "rgb(255, 0, 0)"
+        margin = safe_eval("getComputedStyle(document.body).marginTop")
+        record(failures, "embed", tag, "the host page's body lost its margin (#{margin})") unless margin == "13px"
+        @exceptions.drop(exceptions_from).reject { |e| e.to_s.include?(CRASH_MARKER) }.each do |e|
+          record(failures, "embed", tag, "uncaught exception: #{e}")
+        end
+        { "ok" => failures.empty?, "journeys" => failures }
+      end
+
       private
 
       def record(failures, journey, panel, message)
@@ -80,6 +115,7 @@ module Dovetail
             unless focused
               record(failures, "overlay", mod, "focus did not move inside overlay #{overlay["name"]}")
             end
+            check_top_layer(failures, "overlay", mod, overlay, id)
             if overlay["dismissible"]
               @page.keyboard.type(:escape)
               stack = safe_eval("window.__dovetail.overlays.stack()") || []
@@ -109,6 +145,11 @@ module Dovetail
         b_mod, b_name = blocking[1]
         id_a = safe_eval_async("window.__dovetail.overlays.open('#{a_mod}', '#{a_name}')")
         id_b = safe_eval_async("window.__dovetail.overlays.open('#{b_mod}', '#{b_name}')")
+        blocking_overlays = [[a_mod, a_name, id_a], [b_mod, b_name, id_b]]
+        blocking_overlays.each do |mod, name, id|
+          declared = panel_overlays(mod).find { |o| o["name"] == name } || { "name" => name, "blocking" => true }
+          check_top_layer(failures, "stacked_overlays", "#{a_mod},#{b_mod}", declared, id)
+        end
         stack = safe_eval("window.__dovetail.overlays.stack()") || []
         unless stack.length >= 2 && stack.last["id"] == id_b
           record(failures, "stacked_overlays", "#{a_mod},#{b_mod}", "stacking order not as expected")
@@ -119,6 +160,13 @@ module Dovetail
           record(failures, "stacked_overlays", "#{a_mod},#{b_mod}", "lower overlay did not regain its focus trap")
         end
         safe_eval("window.__dovetail.overlays.close('#{id_a}')")
+      end
+
+      def check_top_layer(failures, journey, panel, overlay, id)
+        expected = overlay["blocking"] ? "modal" : "popover"
+        actual = safe_eval("window.__dovetail.overlays.topLayer('#{id}')")
+        return if actual == expected
+        record(failures, journey, panel, "overlay #{overlay["name"]} is not in the top layer")
       end
 
       def route_journey(panels, failures)

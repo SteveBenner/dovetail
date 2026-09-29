@@ -45,13 +45,13 @@ all panels + the shell ----------> dovetail fuse --verify --> one application
 ## Setting up a checkout
 
 ```console
-$ git clone git@bitbucket.org:paterasai/dovetail.git
+$ git clone git@github.com:SteveBenner/dovetail.git
 $ cd dovetail
 $ (cd runtime && npm install && npm run build)
 $ bundle config set --local path vendor/bundle
 $ bundle install --with verify
 $ ruby exe/dovetail --version
-dovetail 0.1.0
+dovetail 0.3.0
 ```
 
 Put `exe/` on your `PATH` or call `ruby path/to/dovetail/exe/dovetail`.
@@ -77,6 +77,7 @@ Guides:
 - [Working with an AI agent and a brief](docs/guides/working-with-an-ai-agent.md)
 - [Fusing and verifying](docs/guides/fusing-and-verifying.md)
 - [Live components](docs/guides/live-components.md)
+- [Embedding in another web app](docs/guides/embedding.md)
 - [Versioning contracts](docs/guides/versioning-contracts.md)
 
 Reference:

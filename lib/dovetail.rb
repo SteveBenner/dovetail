@@ -4,6 +4,7 @@ require_relative "dovetail/canonical_json"
 
 module Dovetail
   autoload :Contract, "dovetail/contract"
+  autoload :Negotiation, "dovetail/negotiation"
   autoload :Compiler, "dovetail/compiler"
   autoload :Shape, "dovetail/shape"
   autoload :Tokens, "dovetail/tokens"

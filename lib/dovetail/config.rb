@@ -9,6 +9,10 @@ module Dovetail
     DEFAULT_RULES_PROFILE = "strict"
     DEFAULT_NODE = "node"
     DEFAULT_LIVE_BASE = "/live/"
+    DEFAULT_EMBED_TAG = "dovetail-app"
+    RESERVED_EMBED_TAGS = %w[
+      annotation-xml color-profile font-face font-face-src font-face-uri font-face-format font-face-name missing-glyph
+    ].freeze
 
     class << self
       def find(start_dir)
@@ -114,6 +118,27 @@ module Dovetail
       value = "/#{value}" unless value.start_with?("/")
       value = "#{value}/" unless value.end_with?("/")
       value
+    end
+
+    def embed
+      @raw["embed"] == true
+    end
+
+    def embed_tag
+      @raw["embed_tag"] || DEFAULT_EMBED_TAG
+    end
+
+    def validate_embed_tag!
+      tag = embed_tag
+      valid = tag.is_a?(String) &&
+        tag.match?(/\A[a-z][a-z0-9-]*[a-z0-9]\z/) &&
+        tag.include?("-") &&
+        !tag.include?("--") &&
+        !RESERVED_EMBED_TAGS.include?(tag)
+      unless valid
+        raise Dovetail::Error.new("D-CFG-001", "embed_tag #{tag} is not a valid custom element name")
+      end
+      tag
     end
   end
 end
