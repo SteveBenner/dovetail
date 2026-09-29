@@ -1,0 +1,141 @@
+schema: dovetail.tokens/v1
+families:
+  color:
+    css_var: "--{token}"
+    tokens: [surface, surface-2, surface-3, text, text-dim, text-faint, accent, accent-hover, accent-contrast, border, border-strong, success, warning, danger, info]
+  space:
+    css_var: "--space-{token}"
+    tokens: ["0", "0.5", "1", "1.5", "2", "3", "4", "5", "6", "8", "10", "12", "16"]
+  radius:
+    css_var: "--corner-{token}"
+    tokens: [none, sm, md, lg, xl, full]
+  type:
+    css_var: "--type-{token}"
+    line_height_var: "--type-{token}-leading"
+    tokens: [xs, sm, base, lg, xl, 2xl, 3xl]
+  weight:
+    css_var: "--weight-{token}"
+    tokens: [regular, medium, semibold, bold]
+  shadow:
+    css_var: "--elevation-{token}"
+    tokens: [none, sm, md, lg]
+  motion:
+    css_var: "--motion-{token}"
+    tokens: [fast, base, slow]
+    extra_vars: ["--motion-ease"]
+css_var_rule: A dot in a token is written as an underscore in its custom property, so space 0.5 is --space-0_5.
+host_vars: ["--scrim", "--accent-soft", "--danger-contrast", "--family-sans", "--family-mono", "--family-display", "--max-width"]
+variants:
+  pseudo: [hover, focus, focus-visible, active, disabled, dark, motion-reduce]
+  breakpoints: [sm, md, lg, xl]
+  containers: ["@sm", "@md", "@lg", "@xl"]
+  aria: [busy, checked, current, disabled, expanded, hidden, invalid, pressed, readonly, required, selected]
+  data_pattern: "data-[a-z][a-z0-9-]*"
+utilities:
+  color:
+    prefixes: [bg, text, border, border-t, border-r, border-b, border-l, border-x, border-y, border-s, border-e, ring, ring-offset, outline, divide, fill, stroke, placeholder, caret, decoration, accent]
+    keywords: [transparent, current, inherit]
+    opacity_modifiers: ["5", "10", "15", "20", "25", "30", "40", "50", "60", "70", "75", "80", "90", "95"]
+  space:
+    prefixes: [p, px, py, pt, pr, pb, pl, ps, pe, m, mx, my, mt, mr, mb, ml, ms, me, gap, gap-x, gap-y, space-x, space-y, inset, inset-x, inset-y, top, right, bottom, left, start, end, w, h, size, min-w, min-h, max-w, max-h, basis, translate-x, translate-y, scroll-m, scroll-p]
+    negatable: [m, mx, my, mt, mr, mb, ml, ms, me, inset, inset-x, inset-y, top, right, bottom, left, start, end, translate-x, translate-y, space-x, space-y]
+    extra_values: [px]
+    keywords:
+      m: [auto]
+      mx: [auto]
+      my: [auto]
+      mt: [auto]
+      mr: [auto]
+      mb: [auto]
+      ml: [auto]
+      ms: [auto]
+      me: [auto]
+      inset: [auto, full, "1/2"]
+      inset-x: [auto, full, "1/2"]
+      inset-y: [auto, full, "1/2"]
+      top: [auto, full, "1/2"]
+      right: [auto, full, "1/2"]
+      bottom: [auto, full, "1/2"]
+      left: [auto, full, "1/2"]
+      start: [auto, full, "1/2"]
+      end: [auto, full, "1/2"]
+      w: [auto, full, min, max, fit, "1/2", "1/3", "2/3", "1/4", "3/4", "1/5", "2/5", "3/5", "4/5"]
+      h: [auto, full, min, max, fit]
+      size: [auto, full, min, max, fit]
+      min-w: [full, min, max, fit]
+      min-h: [full, min, max, fit]
+      max-w: [none, full, prose, min, max, fit]
+      max-h: [none, full, min, max, fit]
+      basis: [auto, full, "1/2", "1/3", "2/3", "1/4", "3/4"]
+      translate-x: [full, "1/2"]
+      translate-y: [full, "1/2"]
+  radius:
+    prefixes: [rounded, rounded-t, rounded-r, rounded-b, rounded-l, rounded-s, rounded-e, rounded-tl, rounded-tr, rounded-br, rounded-bl]
+  type:
+    size_prefix: text
+    weight_prefix: font
+  shadow:
+    prefix: shadow
+  motion:
+    prefix: duration
+  numbered:
+    grid-cols: {from: 1, to: 12, extra: [none, subgrid]}
+    grid-rows: {from: 1, to: 6, extra: [none, subgrid]}
+    col-span: {from: 1, to: 12, extra: [full]}
+    col-start: {from: 1, to: 13, extra: [auto]}
+    col-end: {from: 1, to: 13, extra: [auto]}
+    row-span: {from: 1, to: 6, extra: [full]}
+    row-start: {from: 1, to: 7, extra: [auto]}
+    row-end: {from: 1, to: 7, extra: [auto]}
+    order: {from: 1, to: 12, extra: [first, last, none]}
+    line-clamp: {from: 1, to: 6, extra: [none]}
+  valued:
+    opacity: ["0", "5", "10", "15", "20", "25", "30", "40", "50", "60", "70", "75", "80", "90", "95", "100"]
+    scale: ["95", "100", "105"]
+    rotate: ["0", "45", "90", "180"]
+  static: [flex, inline-flex, grid, inline-grid, block, inline-block, inline, hidden, contents, flow-root, table, table-row, table-cell, table-header-group, table-row-group, flex-row, flex-row-reverse, flex-col, flex-col-reverse, flex-wrap, flex-nowrap, flex-wrap-reverse, flex-1, flex-auto, flex-initial, flex-none, grow, grow-0, shrink, shrink-0, items-start, items-end, items-center, items-baseline, items-stretch, justify-start, justify-end, justify-center, justify-between, justify-around, justify-evenly, justify-stretch, justify-items-start, justify-items-end, justify-items-center, justify-items-stretch, justify-self-auto, justify-self-start, justify-self-end, justify-self-center, justify-self-stretch, content-start, content-end, content-center, content-between, content-around, content-evenly, content-stretch, self-auto, self-start, self-end, self-center, self-stretch, self-baseline, place-items-start, place-items-end, place-items-center, place-items-stretch, place-content-start, place-content-end, place-content-center, place-content-between, place-content-stretch, place-self-auto, place-self-start, place-self-end, place-self-center, place-self-stretch, truncate, overflow-auto, overflow-hidden, overflow-visible, overflow-scroll, overflow-clip, overflow-x-auto, overflow-x-hidden, overflow-x-scroll, overflow-x-clip, overflow-y-auto, overflow-y-hidden, overflow-y-scroll, overflow-y-clip, relative, absolute, static, sticky, isolate, isolation-auto, visible, invisible, collapse, object-contain, object-cover, object-fill, object-none, object-scale-down, object-center, object-top, aspect-auto, aspect-square, aspect-video, sr-only, not-sr-only, cursor-auto, cursor-default, cursor-pointer, cursor-wait, cursor-text, cursor-move, cursor-not-allowed, cursor-grab, cursor-grabbing, cursor-help, select-none, select-text, select-all, select-auto, pointer-events-none, pointer-events-auto, resize, resize-none, resize-x, resize-y, appearance-none, list-none, list-disc, list-decimal, list-inside, list-outside, whitespace-normal, whitespace-nowrap, whitespace-pre, whitespace-pre-line, whitespace-pre-wrap, whitespace-break-spaces, break-normal, break-all, break-keep, wrap-break-word, wrap-anywhere, wrap-normal, text-left, text-center, text-right, text-justify, text-start, text-end, align-baseline, align-top, align-middle, align-bottom, align-text-top, align-text-bottom, uppercase, lowercase, capitalize, normal-case, italic, not-italic, underline, overline, line-through, no-underline, underline-offset-1, underline-offset-2, underline-offset-4, tabular-nums, lining-nums, proportional-nums, oldstyle-nums, slashed-zero, normal-nums, antialiased, subpixel-antialiased, text-ellipsis, text-clip, text-wrap, text-nowrap, text-balance, text-pretty, font-sans, font-mono, leading-none, leading-tight, leading-snug, leading-normal, leading-relaxed, tracking-tight, tracking-normal, tracking-wide, border, border-0, border-2, border-4, border-t, border-r, border-b, border-l, border-x, border-y, border-s, border-e, border-t-0, border-r-0, border-b-0, border-l-0, border-t-2, border-r-2, border-b-2, border-l-2, border-solid, border-dashed, border-dotted, border-none, divide-x, divide-y, divide-x-0, divide-y-0, divide-x-2, divide-y-2, divide-solid, divide-dashed, ring, ring-0, ring-1, ring-2, ring-inset, ring-offset-0, ring-offset-1, ring-offset-2, outline, outline-none, outline-hidden, outline-0, outline-1, outline-2, outline-offset-0, outline-offset-1, outline-offset-2, outline-offset-4, outline-solid, outline-dashed, transition, transition-none, transition-all, transition-colors, transition-opacity, transition-shadow, transition-transform, ease-theme, animate-none, animate-pulse, animate-spin, origin-center, origin-top, origin-bottom, origin-left, origin-right, origin-top-left, origin-top-right, snap-x, snap-y, snap-mandatory, snap-proximity, snap-start, snap-center, snap-end, snap-none, scroll-smooth, overscroll-contain, overscroll-none, "@container"]
+refused:
+  S-OVL-001: [fixed]
+  S-LAY-002: "z-* and -z-* with any value"
+  S-LAY-001: "h-screen, w-screen, size-screen, min-h-screen, max-h-screen, min-w-screen, max-w-screen, and any size utility whose value is dvh, svh, lvh, dvw, svw or lvw"
+  S-CSS-002: "any class containing [ or ] (arbitrary values, arbitrary variants, arbitrary properties) and any class ending in !"
+suggestions:
+  palette_hues:
+    danger: [red, rose]
+    success: [green, emerald, lime, teal]
+    warning: [yellow, amber, orange]
+    info: [blue, sky, cyan, indigo]
+    accent: [violet, purple, fuchsia, pink]
+  neutral_hues: [gray, slate, zinc, neutral, stone]
+  neutral_by_prefix:
+    text: {"50-300": text-faint, "400-600": text-dim, "700-950": text}
+    bg: {"50-100": surface-2, "200-300": surface-3, "400-950": surface}
+    border: {"50-300": border, "400-950": border-strong}
+    other: {"50-400": border, "500-950": border-strong}
+  keywords:
+    white: {bg: surface, text: accent-contrast, other: border}
+    black: {bg: surface, text: text, other: border-strong}
+  renames:
+    font-normal: font-regular
+    font-light: font-regular
+    font-thin: font-regular
+    font-extrabold: font-bold
+    font-black: font-bold
+    rounded: rounded-md
+    rounded-2xl: rounded-xl
+    rounded-3xl: rounded-xl
+    shadow: shadow-md
+    shadow-xs: shadow-sm
+    shadow-xl: shadow-lg
+    shadow-2xl: shadow-lg
+    text-4xl: text-3xl
+    text-5xl: text-3xl
+    text-6xl: text-3xl
+    duration-75: duration-fast
+    duration-100: duration-fast
+    duration-150: duration-fast
+    duration-200: duration-base
+    duration-300: duration-base
+    duration-500: duration-slow
+    duration-700: duration-slow
+  space_rule: The nearest step in the space family, ties to the smaller step (p-7 suggests p-6).

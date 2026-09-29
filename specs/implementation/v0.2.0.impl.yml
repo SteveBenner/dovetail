@@ -1,0 +1,153 @@
+schema: rstack.blueprint/v1
+task: dovetail-0.2.0
+version: 0.2.0
+intent: >
+  Two generic capabilities for machines without Node and for tools that must carry the checker with them.
+  (1) Live components: dovetail fuse can build an application in which chosen component files are not bundled but
+  fetched as Svelte source and compiled in the browser when the page loads, sharing one Svelte runtime and one
+  @dovetail/runtime with the prebuilt rest of the application. A machine with only Ruby and a Chromium can then render
+  edited components without a build. (2) Checker export: dovetail checker export writes a self-contained copy of the
+  shape checker that runs from its own directory on Ruby 2.6.10 and later with the standard library only.
+  Nothing here names any consumer; the first consumer happens to be a course application whose students have no Node.
+harness: claude-code
+worker: { model: sonnet, effort: high, definition: coding-worker-high }
+repository: bitbucket.org/paterasai/dovetail (the local checkout at ~/bitbucket/paterasai/dovetail)
+spec: specs/dovetail.spec.yml
+previous_blueprint: specs/implementation/v0.1.0.impl.yml
+
+constraints:
+  - >-
+    AGENTS.md Part S. Write no tests, no spec files, no test directories and no test helpers. Verify by running the
+    real command line against throwaway applications kept OUTSIDE the repository, in
+    <scratchpad>/a1/dovetail/, where <scratchpad> is
+    /tmp/claude-1000/-home-sven-bitbucket-paterasai-rstack-uber/9ba9679b-41fd-4c31-b5a0-817e860e6af1/scratchpad.
+    Report exactly what you ran and what it printed.
+  - >-
+    AGENTS.md Part Q. Write no comments, doc comments or docstrings in any file you write or change (Ruby,
+    JavaScript, TypeScript, Svelte, CSS, YAML, JSON). Only lines a tool reads survive (shebangs, magic comments).
+  - AGENTS.md Part F. No authorship or agent attribution anywhere.
+  - AGENTS.md Part E. Delete nothing outside your scratch directory; never run rm -r, git clean or find -delete.
+  - AGENTS.md Part J. Query codebase memory (project home-sven-bitbucket-paterasai-dovetail) before grepping.
+  - Do not run git add, git commit, git stash, git checkout or any other git write. The primary stages and commits.
+  - Touch only owns_paths. Read anything. Needs outside them go in your report.
+  - >-
+    No em-dash or en-dash characters in any user-visible string (CLI output, errors, docs, runtime copy).
+  - >-
+    The Ruby side keeps the 2.6.10 floor with the standard library only (see the v0.1.0 blueprint's list of
+    forbidden constructs). Check every Ruby file you touch with docker run --rm -v "$PWD":/d -w /d ruby:2.6.10-slim
+    ruby -c <file>, and run checker export's output inside that container.
+  - Keep every existing command, flag, exit code and output of 0.1.0 unchanged unless this file says otherwise.
+
+environment:
+  ruby_host: /usr/bin/ruby is Ruby 3.3. Ruby 4.0.6 is at ~/.rubies/ruby-4.0.6/bin/ruby.
+  ruby_floor: docker image ruby:2.6.10-slim (pulled; standard library only).
+  node: Node 26.10 and npm on the PATH; the npm registry is reachable. runtime/node_modules is installed and
+    runtime/dist is built; rebuild it with (cd runtime && npm run build) after runtime changes.
+  browser: System Google Chrome at /usr/bin/google-chrome; run headless. ferrum is in vendor/bundle (verify group).
+  reference_app: >-
+    A previously fused throwaway app with two panels lives at <scratchpad>/final/myapp (dovetail.yml, ui/,
+    modules/finance, modules/people_operations). Copy it into your scratch directory; do not edit it in place.
+
+owns_paths:
+  - lib/dovetail/fuse.rb
+  - lib/dovetail/fuse/**
+  - lib/dovetail/config.rb
+  - lib/dovetail/cli.rb
+  - lib/dovetail/cli/fuse.rb
+  - lib/dovetail/cli/checker.rb
+  - lib/dovetail/checker_export.rb
+  - lib/dovetail/verify/static_server.rb
+  - lib/dovetail/version.rb
+  - runtime/tools/**
+  - runtime/src/live/**
+  - runtime/src/internal.ts
+  - runtime/package.json
+  - runtime/package-lock.json
+  - templates/shell/dovetail.yml
+  - docs/reference/cli.md
+  - docs/guides/fusing-and-verifying.md
+  - docs/guides/live-components.md
+  - specs/dovetail.spec.yml
+  - CHANGELOG.md
+  - VERSION
+  - README.md
+
+design:
+  live_components:
+    configuration: >-
+      dovetail.yml gains live (a list of globs relative to the application root, default empty) and live_base (a URL
+      path prefix, default "/live/"). dovetail fuse gains --live <glob>, repeatable, added to the configured list.
+      With no live globs, fuse behaves exactly as 0.1.0 and emits byte-for-byte the same kind of build.
+    build: >-
+      Every component file that matches a live glob is left out of the bundle. Each import of it in bundled code is
+      replaced by a runtime load: the browser fetches <live_base><path relative to the application root>, compiles
+      it with the Svelte compiler (generate client, css injected, the same svelte version the runtime uses), and
+      evaluates it as an ES module. The Svelte runtime modules (svelte and every svelte/* entry compiled code imports)
+      and @dovetail/runtime (and its ./components, ./icons and ./internal entries) are emitted once as shared ES
+      modules and named in an import map in index.html, so bundled and live code use one instance of each; contexts,
+      the overlay host, the router, the event bus and the panel API behave in a live component exactly as in a
+      bundled one. The compiler is loaded only when the page first needs a live component.
+    imports_allowed_in_live_components: >-
+      The shared specifiers above, plus whatever a panel component may import in 0.1.0 from the panel's own generated
+      code (its data client, types and messages): expose those as import-map entries or as URLs the loader rewrites
+      relative specifiers to. A live component that imports anything else fails with a clear message naming the
+      specifier.
+    failure: >-
+      A fetch, compile or import failure renders inside the panel's existing error boundary (the fallback card) with
+      the compiler's message and logs one console.error naming the file; it never blanks the page or blocks the other
+      panels.
+    styling: >-
+      When any live glob is set, the generated CSS contains every utility the token class grammar admits (safelist
+      the full vocabulary, for example through Tailwind v4's @source inline()), so a class a live component uses is
+      styled without a rebuild. A component's own <style> block is injected by the compiler.
+    serving: >-
+      The build is static. Whatever serves it must also serve live sources at live_base from the application root
+      (content type text/plain or text/javascript, never cached: Cache-Control no-store). dovetail verify's
+      StaticServer does so for a live build, so dovetail fuse --verify works on one.
+    performance: The first live component renders within 2 seconds of navigation on this host; later ones reuse the loaded compiler.
+  checker_export:
+    command: dovetail checker export <dir>
+    behaviour: >-
+      Writes a self-contained checker: <dir>/exe/dovetail, <dir>/lib/** (the files dovetail check, dovetail brief,
+      dovetail rules and dovetail --version load, and nothing that needs a gem or Node) and <dir>/VERSION. <dir> must
+      not exist or must be empty; otherwise D-USE-001 and exit 2. Prints "exported dovetail <version> checker to
+      <dir>". Exit 0.
+    guarantee: >-
+      ruby <dir>/exe/dovetail check <panel_dir> --shape <shape.json> --require-signed --format json runs from that
+      directory alone (no repository, no bundler, no gems) on ruby:2.6.10-slim and on Ruby 3.3 and 4.0.6, with keys
+      from --public-key or DOVETAIL_PUBLIC_KEYS, and prints the same report the repository's dovetail prints.
+  version: >-
+    0.2.0 in VERSION, lib/dovetail/version.rb and runtime/package.json (and its lock's root entry).
+  docs: >-
+    docs/guides/live-components.md (new): what a live build is, how to configure it, what a live component may
+    import, how to serve it, its limits. docs/reference/cli.md: --live and checker export. docs/guides/fusing-and-verifying.md:
+    a short section pointing at the live guide. README.md: one line in the documentation list. CHANGELOG.md: a
+    [0.2.0] - 2026-09-28 entry (Added: live components, checker export).
+  spec: >-
+    specs/dovetail.spec.yml: version 0.2.0; add live to configuration_file.fields and the cli fuse synopsis; add a
+    live_components section and a checker_export entry under cli; append implementation_decisions entries recording
+    the import-map sharing, the safelist and the failure rendering. Parse the file with Ruby YAML after editing.
+
+acceptance:
+  - >-
+    A copy of the reference app with live: ["modules/*/panel/src/**/*.svelte"] limited to one component per panel
+    (move or add one small component under src/ and import it from the panel) fuses; serve dist with a static
+    server that also serves /live/ from the app root; in headless Chrome the panels render, the live component shows
+    its content and token-classed styling, an overlay opened from a live component traps focus and returns it, and
+    the console has no errors.
+  - Editing the live component's source on disk and reloading shows the edit with no rebuild.
+  - A syntax error in the live source shows the fallback card with the compiler message; the other panel still works.
+  - An import of a disallowed specifier fails with a message naming it.
+  - dovetail fuse --verify passes on the live build.
+  - A build with no live globs is unchanged from 0.1.0 behaviour (fuse --verify passes on the untouched reference app).
+  - >-
+    dovetail checker export <scratch>/chk, then in ruby:2.6.10-slim with only <scratch>/chk and a shape, a key and a
+    panel mounted: a clean panel exits 0 with an empty findings list; a setInterval panel exits 1 with S-LIF-001; a
+    tampered shape exits 2 with D-SHP-002. Same on Ruby 3.3 and 4.0.6.
+  - Every Ruby file touched passes ruby -c on 2.6.10.
+
+report:
+  - What you ran for each acceptance item and what it printed (trim long output).
+  - The exact import map, the list of shared modules, and the specifiers a live component may import.
+  - The file list of a checker export and its size.
+  - Anything in this blueprint you could not do as written, and why.

@@ -1,0 +1,313 @@
+---
+rules:
+- id: S-OVL-001
+  seam: overlay
+  severity: error
+  finds: 'position: fixed on an element, or a class or style producing it'
+  fix: Open the content with openOverlay or <Overlay>
+  example_violation: <div class="fixed inset-0 bg-surface">...</div>
+  example_compliant: "<button onclick={() => openOverlay('finding_detail', FindingDetail,
+    { id })}>Details</button>"
+  why_it_breaks_fusion: A fixed layer from one panel covers the others and escapes
+    the shared stacking order, so another panel's modal can open underneath it.
+- id: S-OVL-002
+  seam: overlay
+  severity: error
+  finds: dialog.showModal(), document.body.style.overflow, or body class toggles
+  fix: Use the overlay host, which owns focus and scroll lock
+  example_violation: dialog.showModal(); document.body.style.overflow = 'hidden';
+  example_compliant: const h = openOverlay('confirm', Confirm, { message }); await
+    h.closed;
+  why_it_breaks_fusion: Two panels each locking body scroll leave the page frozen
+    when one of them forgets to unlock.
+- id: S-OVL-003
+  seam: overlay
+  severity: error
+  finds: An overlay opened by a name the shape does not declare
+  fix: Declare the overlay in the contract or use a declared one
+  example_violation: openOverlay('quick_edit', QuickEdit, {})  (quick_edit not in
+    the shape)
+  example_compliant: 'overlay :quick_edit, kind: :modal, dismissible: true  (declared
+    in the contract) then openOverlay(''quick_edit'', ...)'
+  why_it_breaks_fusion: The fuser registers overlays by name so the verifier can exercise
+    them; an undeclared overlay is never tested.
+- id: S-NAV-001
+  seam: navigation
+  severity: error
+  finds: window.location, history.pushState, history.replaceState
+  fix: Use navigate or link
+  example_violation: window.location.href = '/finance/findings/' + id;
+  example_compliant: navigate('/finance/findings/:id', { id });
+  why_it_breaks_fusion: Writing the location directly bypasses route ownership and
+    breaks back-button history for other panels.
+- id: S-NAV-002
+  seam: navigation
+  severity: error
+  finds: A route outside the panel's declared patterns
+  fix: Declare the route or use a shell link
+  example_violation: navigate('/records/browse');  (from the Finance panel)
+  example_compliant: emit('finance.record_requested', { record_id });  (Records decides
+    where to go)
+  why_it_breaks_fusion: A panel linking into another panel's internal route breaks
+    when that panel renames a route.
+- id: S-STO-001
+  seam: storage
+  severity: error
+  finds: localStorage, sessionStorage, indexedDB, document.cookie
+  fix: Use store(key) with a declared storage key
+  example_violation: localStorage.setItem('filters', JSON.stringify(filters));
+  example_compliant: store('filters').set(filters);  (storage_key :filters declared)
+  why_it_breaks_fusion: Unnamespaced keys from two panels overwrite each other.
+- id: S-EVT-001
+  seam: events
+  severity: error
+  finds: An import from another module's panel or stores
+  fix: Communicate through a declared event
+  example_violation: import { selected } from '../../records/panel/src/stores';
+  example_compliant: on('records.record_selected', ({ record_id }) => ...);
+  why_it_breaks_fusion: Importing another panel's internals couples the builds; the
+    other team's refactor breaks this panel.
+- id: S-EVT-002
+  seam: events
+  severity: error
+  finds: emit or on with an event the shape does not declare
+  fix: Declare it in the contract (emits or consumes)
+  example_violation: emit('finance.margin_changed', { value });  (not declared)
+  example_compliant: 'emits :margin_changed, payload: :margin  (declared) then emit(''finance.margin_changed'',
+    margin);'
+  why_it_breaks_fusion: Consumers cannot rely on an event nobody declared, and its
+    payload is never validated.
+- id: S-EVT-003
+  seam: events
+  severity: error
+  finds: window.postMessage, dispatchEvent on window or document
+  fix: Use emit
+  example_violation: window.dispatchEvent(new CustomEvent('refresh'));
+  example_compliant: emit('finance.refresh_requested', {});
+  why_it_breaks_fusion: Global DOM events reach every panel, including ones that never
+    agreed to listen.
+- id: S-DAT-001
+  seam: data
+  severity: error
+  finds: fetch, XMLHttpRequest, EventSource, WebSocket, navigator.sendBeacon
+  fix: Use the generated client
+  example_violation: 'const r = await fetch(''/api/v1/modules/finance/margin'', {
+    method: ''POST'', body });'
+  example_compliant: const r = await finance.margin({ revenue, cogs }); if (r.ok)
+    ... else ...
+  why_it_breaks_fusion: Direct fetch skips validation, timeouts, retries and the unavailable
+    and not_built states.
+- id: S-DAT-002
+  seam: data
+  severity: error
+  finds: A client call to an operation the shape does not list
+  fix: Use a declared operation
+  example_violation: await records.purgeAll();  (not in the shape's operations)
+  example_compliant: Use only the operations the contract lists; ask for a new operation
+    through the contract.
+  why_it_breaks_fusion: An operation outside the contract is outside what the backend
+    promised to support.
+- id: S-KEY-001
+  seam: keyboard
+  severity: error
+  finds: keydown, keyup or keypress listeners on window or document (including svelte:window
+    and svelte:document)
+  fix: Use shortcut with a declared shortcut
+  example_violation: "<svelte:window onkeydown={handleKey} />"
+  example_compliant: shortcut('mod+k', openSearch);  (shortcut declared)
+  why_it_breaks_fusion: Two panels handling the same key on the window both fire,
+    or one swallows the other's keys.
+- id: S-LIF-001
+  seam: lifecycle
+  severity: error
+  finds: setInterval, setTimeout, requestAnimationFrame, requestIdleCallback
+  fix: Use every, after or frame
+  example_violation: setInterval(refresh, 5000);
+  example_compliant: every(5000, refresh);
+  why_it_breaks_fusion: A raw interval keeps running after the panel unmounts and
+    calls into a destroyed component.
+- id: S-ID-001
+  seam: identity
+  severity: error
+  finds: A literal id attribute or literal ARIA id reference
+  fix: Use useId
+  example_violation: <label for="amount">Amount</label><input id="amount" />
+  example_compliant: const id = useId('amount'); <label for={id}>Amount</label><input
+    {id} />
+  why_it_breaks_fusion: Two panels both using id=amount make labels point at the wrong
+    input.
+- id: S-LAY-001
+  seam: layout
+  severity: error
+  finds: vw, vh, dvh, svh, lvh units used for size
+  fix: Use container-query units or percentages
+  example_violation: <section class="h-screen">
+  example_compliant: <section class="h-full min-h-0">  (the slot sets the height)
+  why_it_breaks_fusion: Viewport sizing assumes the panel owns the page; in a slot
+    it overflows its neighbours.
+- id: S-LAY-002
+  seam: layout
+  severity: error
+  finds: z-index outside the overlay host
+  fix: Remove it; stacking belongs to the overlay host
+  example_violation: ".card { z-index: 50; }"
+  example_compliant: Remove the z-index; open floating content through the overlay
+    host.
+  why_it_breaks_fusion: Competing z-index values across panels make overlays appear
+    under ordinary content.
+- id: S-LAY-003
+  seam: layout
+  severity: error
+  finds: Negative margins on the panel's root element
+  fix: Use padding inside the slot
+  example_violation: <div class="-mx-6">
+  example_compliant: <div class="px-0">  (pad inside the slot instead)
+  why_it_breaks_fusion: Negative margins on the root paint over the neighbouring slot.
+  relaxed_severity: warning
+- id: S-LAY-004
+  seam: layout
+  severity: error
+  finds: Reaching the page outside the slot through document - querySelector, querySelectorAll,
+    getElementById, getElementsByClassName, getElementsByTagName, getElementsByName,
+    elementFromPoint, elementsFromPoint, and inserting into or removing from document.body
+    or document.documentElement
+  fix: Use bind:this for elements inside your panel, openOverlay for anything that
+    must render above it, and events to affect another panel
+  example_violation: document.querySelector('nav').remove(); document.body.appendChild(tooltip);
+  example_compliant: let chart; <div bind:this={chart}></div>
+  why_it_breaks_fusion: A panel that queries or edits the whole document can find
+    and change another panel's elements, or render outside every slot, and no other
+    panel's author agreed to that.
+- id: S-CSS-001
+  seam: tokens
+  severity: error
+  finds: A class outside the token vocabulary
+  fix: Use the nearest token class; the message names it
+  example_violation: <p class="text-gray-500">
+  example_compliant: <p class="text-text-dim">
+  why_it_breaks_fusion: Classes outside the token vocabulary do not change with the
+    theme.
+- id: S-CSS-002
+  seam: tokens
+  severity: error
+  finds: An arbitrary value class such as bg-[#123456] or p-[13px]
+  fix: Use a token
+  example_violation: <div class="bg-[#1d1d1f] p-[13px]">
+  example_compliant: <div class="bg-surface-2 p-3">
+  why_it_breaks_fusion: Arbitrary values bypass the theme and the spacing scale.
+- id: S-CSS-003
+  seam: tokens
+  severity: error
+  finds: A literal colour, length or shadow in a style block or style attribute (hex,
+    rgb, hsl, px other than 0 and 1px borders)
+  fix: Use var(--token)
+  example_violation: "<style> .tile { color: #c9a961; margin: 13px; } </style>"
+  example_compliant: "<style> .tile { color: var(--accent); margin: var(--space-3);
+    } </style>"
+  why_it_breaks_fusion: A literal colour renders correctly in one theme only.
+- id: S-CSS-004
+  seam: tokens
+  severity: error
+  finds: ":global selectors and element selectors that reach outside the component"
+  fix: Style within the component
+  example_violation: ":global(.btn) { border-radius: 0; }"
+  example_compliant: Style the component's own elements, or use a Dovetail Button
+    variant.
+  why_it_breaks_fusion: A global selector restyles every panel's buttons.
+- id: S-CSS-005
+  seam: tokens
+  severity: error
+  finds: A class attribute built from a non-literal expression the checker cannot
+    resolve
+  fix: 'Use class: directives or literal alternatives so every class is visible to
+    the checker'
+  example_violation: "<div class={tone + '-box'}>"
+  example_compliant: "<div class:bg-surface-2={tone === 'calm'} class:bg-warning={tone
+    === 'alert'}>"
+  why_it_breaks_fusion: A computed class name can produce any class, including ones
+    outside the token vocabulary.
+  relaxed_severity: warning
+- id: S-HTML-001
+  seam: layout
+  severity: error
+  finds: Landmark roles banner, navigation, contentinfo or main in a panel
+  fix: Use region
+  example_violation: <nav role="navigation">...</nav>
+  example_compliant: <div role="region" aria-label={t('finance.sections')}>...</div>
+  why_it_breaks_fusion: Two navigation landmarks confuse screen-reader users about
+    which is the application's.
+- id: S-HTML-002
+  seam: layout
+  severity: error
+  finds: A heading above the slot's starting level
+  fix: Start at the slot's heading level
+  example_violation: "<h1>Margins</h1>  (in a main slot)"
+  example_compliant: "<h2>Margins</h2>"
+  why_it_breaks_fusion: A second h1 breaks the page outline the shell owns.
+  relaxed_severity: warning
+- id: S-HTML-003
+  seam: layout
+  severity: error
+  finds: A form control without a label
+  fix: Add a label or aria-label
+  example_violation: "<input bind:value={amount} />"
+  example_compliant: "<Field label={t('finance.amount')}><NumberInput bind:value={amount}
+    /></Field>"
+  why_it_breaks_fusion: An unlabelled control cannot be used with a screen reader.
+- id: S-HTML-004
+  seam: security
+  severity: warning
+  finds: Any {@html} block
+  fix: Render structured content with components; if raw HTML is unavoidable, sanitise
+    it on the server and keep the warning with a justification
+  example_violation: "{@html review.body}"
+  example_compliant: "<p>{review.body}</p>  (text is escaped by default)"
+  why_it_breaks_fusion: Raw HTML from imported data can carry script into every panel
+    on the page.
+- id: S-I18N-001
+  seam: messages
+  severity: warning
+  finds: A message key without the module prefix
+  fix: Prefix the key with the module id
+  example_violation: t('title')
+  example_compliant: t('finance.dashboard.title')
+  why_it_breaks_fusion: Unprefixed keys from two panels collide in the merged message
+    catalogue.
+- id: S-STATE-001
+  seam: states
+  severity: error
+  finds: A declared view that does not render one of its required states
+  fix: Render loading, empty, error, unavailable and ready
+  example_violation: <View name="dashboard">{#if data}<Dashboard {data} />{/if}</View>
+  example_compliant: <View name="dashboard"><States loading={Skeleton} empty={Empty}
+    error={Err} unavailable={Unavail} ready={Dashboard} /></View>
+  why_it_breaks_fusion: Without an unavailable state the panel shows a blank area
+    when the backend is down, which the A3 cutouts are graded on.
+- id: S-DYN-001
+  seam: any
+  severity: error
+  finds: Computed access to globals (globalThis[...], window[...]) and eval, Function,
+    new Function
+  fix: Use the primitives directly
+  example_violation: globalThis['local' + 'Storage'].setItem(k, v);
+  example_compliant: store(k).set(v);
+  why_it_breaks_fusion: Computed global access hides a seam effect from the checker.
+- id: S-DEP-001
+  seam: any
+  severity: error
+  finds: An import of a package outside the allowed list (@dovetail/runtime, svelte,
+    the generated types and client, the panel's own files)
+  fix: Build it from the allowed packages
+  example_violation: import dayjs from 'dayjs';
+  example_compliant: Use the locale formatters from @dovetail/runtime.
+  why_it_breaks_fusion: An extra package adds weight and behaviour the other panels
+    never agreed to.
+- id: S-PARSE-001
+  seam: any
+  severity: warning
+  finds: A construct the parser does not recognise
+  fix: Report it; the file was still checked by text scanning
+  example_violation: A syntax the checker does not know yet
+  example_compliant: The file is still checked by text scanning; report the construct
+    so the parser can learn it.
+  why_it_breaks_fusion: Unknown constructs are never assumed safe.

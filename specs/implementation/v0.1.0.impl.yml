@@ -1,0 +1,1687 @@
+schema: rstack.blueprint/v1
+task: dovetail-0.1.0
+version: 0.1.0
+intent: >
+  Build Dovetail 0.1.0 from specs/dovetail.spec.yml: the contract DSL and its loader, the compiler (JSON Schema,
+  TypeScript, the data client, shape.json, the brief, registry entries), the pure-Ruby shape checker, shape signing,
+  the fuser, the Ferrum composition verifier, the development server, the Svelte 5 runtime (@dovetail/runtime), the
+  command line and the starter templates. The spec is the product definition; its implementation_decisions section
+  (at the end of the file) settles every point the spec left open, and this blueprint settles the rest. Four workers
+  build four slices in parallel in one working tree with disjoint file ownership. Where this file and the spec
+  differ, this file wins; where both are silent, stop and report instead of choosing.
+harness: claude-code
+worker: { model: sonnet, effort: medium, definition: coding-worker }
+repository: bitbucket.org/paterasai/dovetail (a local checkout)
+spec: specs/dovetail.spec.yml
+
+constraints:
+  - >-
+    AGENTS.md Part S. Write no tests, no spec files, no test directories and no test helpers. Verify by running the
+    real command line and code against throwaway fixtures kept OUTSIDE the repository, in the scratchpad directory
+    <scratchpad>/dovetail-<slice>/, where <scratchpad> is the session scratch directory the primary names
+    and report exactly what you ran and what it printed.
+  - >-
+    AGENTS.md Part Q. Write no comments, doc comments or docstrings in any file (Ruby, TypeScript, Svelte, CSS, JSON,
+    YAML, Markdown code blocks inside templates). Only lines a tool reads survive, such as the exe/dovetail shebang.
+  - AGENTS.md Part F. No authorship or agent attribution anywhere.
+  - AGENTS.md Part E. Delete nothing outside your own scratch directory; never run rm -r, git clean or find -delete.
+  - >-
+    AGENTS.md Part J. Query codebase memory (project home-sven-bitbucket-paterasai-dovetail) before grepping when you
+    need to find code another slice wrote.
+  - Do not run git add, git commit, git stash, git checkout or any other git write. The primary stages and commits.
+  - >-
+    Touch only the paths your slice owns (owns_paths). You may read anything. If you need a change in a path another
+    slice owns, write it in your report instead of making it.
+  - >-
+    No em-dash or en-dash characters in any user-visible string (messages, briefs, templates, runtime copy, CLI output).
+    Use a hyphen, a comma or two sentences.
+  - >-
+    Ruby layers (everything under lib/ except lib/dovetail/verify/) run on Ruby 2.6.10 through 4.0.x with the standard
+    library only. Forbidden because they do not exist on the 2.6 floor - Hash#except, Enumerable#filter_map,
+    Enumerable#tally, Array#intersect?, numbered block parameters (_1), pattern matching (case/in), rightward
+    assignment, endless methods, argument forwarding (...), anonymous block or rest forwarding (&, *, **), hash value
+    shorthand ({x:}), Data.define, Comparable#clamp with a Range, and positional permitted classes for YAML. Use
+    YAML.safe_load(text, permitted_classes: [], aliases: false) with keyword arguments. Require "set" explicitly.
+    WEBrick is not in the standard library on 3.x; use TCPServer.
+  - >-
+    Check every Ruby file you write with the 2.6 floor, not only the host Ruby, using
+    docker run --rm -v "$PWD":/d -w /d ruby:2.6.10-slim (from the repository root) ruby -c <file> for syntax and
+    by running the slice's commands inside that container (the image is already pulled).
+
+environment:
+  ruby_host: /usr/bin/ruby is Ruby 3.3. Ruby 4.0.6 is at ~/.rubies/ruby-4.0.6/bin/ruby.
+  ruby_floor: docker image ruby:2.6.10-slim (standard library only; no git, no build tools).
+  node: Node 26.10, npm 11.19, pnpm 11.25 on the PATH; the npm registry is reachable.
+  browsers: System Google Chrome 154 at /usr/bin/google-chrome. Use it for headless work (user-installed Chromium is
+    blocked by AppArmor on this host). Run headless.
+  ferrum: Not installed. Slice D installs it through the Gemfile's verify group with bundle config set --local path
+    vendor/bundle, on /usr/bin/ruby.
+  svelte: 5.57.x is current on npm.
+
+foundation:
+  owner: slice_a
+  rule: >
+    These files are shared by every Ruby slice. Their content is fixed and given verbatim here. Slice A writes them
+    first, before anything else. Any other slice that needs one before it exists may write it with exactly this content,
+    byte for byte, and must not change it; whoever writes it, the bytes are the same. Only slice A may change a
+    foundation file, and only to register its own command in COMMANDS if the list here is wrong (it is not).
+  files:
+    - path: lib/dovetail.rb
+      content: |
+        require_relative "dovetail/version"
+        require_relative "dovetail/errors"
+        require_relative "dovetail/canonical_json"
+
+        module Dovetail
+          autoload :Contract, "dovetail/contract"
+          autoload :Compiler, "dovetail/compiler"
+          autoload :Shape, "dovetail/shape"
+          autoload :Tokens, "dovetail/tokens"
+          autoload :Signing, "dovetail/signing"
+          autoload :Config, "dovetail/config"
+          autoload :Layout, "dovetail/layout"
+          autoload :Fuse, "dovetail/fuse"
+          autoload :Verify, "dovetail/verify"
+          autoload :Dev, "dovetail/dev"
+          autoload :Messages, "dovetail/messages"
+          autoload :CLI, "dovetail/cli"
+
+          def self.root
+            File.expand_path("..", __dir__)
+          end
+        end
+    - path: lib/dovetail/version.rb
+      content: |
+        module Dovetail
+          VERSION = "0.1.0"
+        end
+    - path: lib/dovetail/errors.rb
+      content: |
+        module Dovetail
+          class Error < StandardError
+            attr_reader :code, :details
+
+            def initialize(code, message, details = {})
+              @code = code
+              @details = details
+              super(message)
+            end
+          end
+        end
+    - path: lib/dovetail/canonical_json.rb
+      content: |
+        require "json"
+
+        module Dovetail
+          module CanonicalJSON
+            module_function
+
+            def sort(value)
+              case value
+              when Hash
+                pairs = value.map { |key, item| [key.to_s, item] }
+                pairs.sort_by { |pair| pair[0] }.each_with_object({}) { |pair, out| out[pair[0]] = sort(pair[1]) }
+              when Array
+                value.map { |item| sort(item) }
+              when Symbol
+                value.to_s
+              else
+                value
+              end
+            end
+
+            def dump(value)
+              JSON.generate(sort(value))
+            end
+
+            def pretty(value)
+              "#{JSON.pretty_generate(sort(value))}\n"
+            end
+          end
+        end
+    - path: lib/dovetail/cli.rb
+      content: |
+        module Dovetail
+          module CLI
+            COMMANDS = {
+              "compile" => ["dovetail/cli/compile", "Compile"],
+              "check" => ["dovetail/cli/check", "Check"],
+              "fuse" => ["dovetail/cli/fuse", "Fuse"],
+              "verify" => ["dovetail/cli/verify", "Verify"],
+              "contract" => ["dovetail/cli/contract", "Contract"],
+              "brief" => ["dovetail/cli/brief", "Brief"],
+              "sign" => ["dovetail/cli/sign", "Sign"],
+              "new" => ["dovetail/cli/new", "New"],
+              "rules" => ["dovetail/cli/rules", "Rules"],
+              "dev" => ["dovetail/cli/dev", "Dev"],
+              "messages" => ["dovetail/cli/messages", "Messages"]
+            }.freeze
+
+            USAGE = <<~TEXT.freeze
+              Usage: dovetail <command> [options]
+
+                compile <contract.rb>... --out <dir>
+                check <panel_dir> --shape <file> [--require-signed --public-key <pem>] [--format text|json]
+                fuse --app <shell> --panels <dir>... [--verify] [--out <dist>]
+                verify <dist>
+                contract lint|diff|show <file>...
+                brief <shape.json>
+                sign <shape.json> --private-key <pem>
+                new shell|panel <name>
+                rules [id]
+                dev --app <shell> --panels <dir>... [--backend <url>] [--static] [--port <n>]
+                messages check [--app <shell>] [--panels <dir>...]
+
+              Global flags: --quiet --no-color --version
+            TEXT
+
+            class << self
+              attr_accessor :quiet, :color
+
+              def run(argv, stdout: $stdout, stderr: $stderr)
+                args = argv.dup
+                self.quiet = !args.delete("--quiet").nil?
+                no_color = !args.delete("--no-color").nil?
+                self.color = !no_color && ENV["NO_COLOR"].to_s.empty? && stdout.respond_to?(:tty?) && stdout.tty?
+                if args.delete("--version")
+                  stdout.puts("dovetail #{Dovetail::VERSION}")
+                  return 0
+                end
+                name = args.shift
+                if name.nil?
+                  stderr.puts(USAGE)
+                  return 2
+                end
+                if %w[help --help -h].include?(name)
+                  stdout.puts(USAGE)
+                  return 0
+                end
+                entry = COMMANDS[name]
+                unless entry
+                  stderr.puts("dovetail: unknown command #{name}")
+                  stderr.puts(USAGE)
+                  return 2
+                end
+                require entry[0]
+                const_get(entry[1]).run(args, stdout: stdout, stderr: stderr)
+              rescue Dovetail::Error => e
+                stderr.puts("#{e.code} #{e.message}")
+                2
+              end
+            end
+          end
+        end
+    - path: exe/dovetail
+      mode: "0755"
+      content: |
+        #!/usr/bin/env ruby
+        $LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
+        require "dovetail"
+        require "dovetail/cli"
+        exit(Dovetail::CLI.run(ARGV))
+    - path: dovetail.gemspec
+      content: |
+        require_relative "lib/dovetail/version"
+
+        Gem::Specification.new do |spec|
+          spec.name = "dovetail"
+          spec.version = Dovetail::VERSION
+          spec.summary = "A typed UI framework for fusing independently built frontend modules into one application."
+          spec.authors = ["PaterasAI"]
+          spec.license = "AGPL-3.0-only"
+          spec.required_ruby_version = ">= 2.6.10"
+          spec.files = Dir.glob(%w[lib/**/* exe/* templates/**/* runtime/src/**/* runtime/tools/**/* runtime/package.json runtime/package-lock.json specs/**/* README.md CHANGELOG.md VERSION], File::FNM_DOTMATCH).reject { |path| File.directory?(path) }
+          spec.bindir = "exe"
+          spec.executables = ["dovetail"]
+          spec.require_paths = ["lib"]
+        end
+    - path: Gemfile
+      content: |
+        source "https://rubygems.org"
+
+        gemspec
+
+        group :verify, optional: true do
+          gem "ferrum"
+        end
+    - path: .gitignore
+      content: |
+        /.bundle/
+        /vendor/bundle/
+        /runtime/node_modules/
+        /runtime/dist/
+        /runtime/.svelte-kit/
+        .dovetail/
+        /pkg/
+        *.gem
+        TMP_AGENT_FILE_LOCKS.yml
+
+shared_contracts:
+  cli_command_contract: >
+    Every subcommand is a module Dovetail::CLI::<Name> in lib/dovetail/cli/<name>.rb exposing
+    self.run(args, stdout:, stderr:) -> Integer (the exit code). The dispatcher has already removed --quiet, --no-color
+    and --version from args; read Dovetail::CLI.quiet and Dovetail::CLI.color. Parse options with the standard library
+    OptionParser. A Dovetail::Error that escapes run is printed as "<code> <message>" on stderr with exit 2 by the
+    dispatcher; catch it yourself when the command's own exit code table says otherwise.
+
+  model_json:
+    producer: slice_a
+    consumers: [slice_d]
+    form: >
+      The contract model as plain JSON (what dovetail contract show prints and what compile writes to
+      <out>/model/<module>.model.json), keys sorted, written with Dovetail::CanonicalJSON.pretty. Shape:
+    example: |
+      {
+        "schema": "dovetail.model/v1",
+        "module": "finance",
+        "version": 2,
+        "description": null,
+        "depends_on": [{"module": "context", "requirement": ">= 1"}],
+        "types": {
+          "margin": {"fields": [
+            {"name": "gross_margin_pct", "type": {"kind": "scalar", "name": "Decimal"}, "required": true, "nullable": true,
+             "description": null, "default": null, "has_default": false, "enum": null, "min": null, "max": null,
+             "pattern": null, "format": null, "sensitive": false, "deprecated": null},
+            {"name": "status", "type": {"kind": "scalar", "name": "String"}, "required": true, "nullable": false,
+             "enum": ["ok", "undefined"], "...": "remaining options as above"}]}
+        },
+        "operations": {
+          "margin": {"input": {"kind": "inline", "fields": ["...field objects..."]}, "output": {"kind": "named", "name": "margin"},
+                     "errors": ["insufficient_input"], "timeout_ms": 10000, "idempotent": false, "description": null},
+          "findings": {"input": {"kind": "inline", "fields": []}, "output": {"kind": "list", "of": {"kind": "named", "name": "finding"}},
+                       "errors": ["unavailable"], "timeout_ms": 10000, "idempotent": false, "description": null}
+        },
+        "emits": {"finding_selected": {"payload": {"kind": "inline", "fields": ["..."]}, "description": null}},
+        "consumes": [{"module": "context", "event": "settings_changed"}],
+        "panel": {
+          "slots": [{"name": "main", "size": "main", "min_width": 480, "max_width": null, "description": null}],
+          "views": [{"name": "dashboard", "data": "findings", "states": ["loading", "empty", "error", "unavailable", "ready"], "description": null}],
+          "capabilities": ["navigation", "overlay", "storage"],
+          "routes": ["/finance", "/finance/findings/:id"],
+          "props": [{"name": "tenant", "type": {"kind": "scalar", "name": "Id"}, "required": true}],
+          "tokens": ["default"],
+          "storage_keys": [{"name": "period", "type": {"kind": "scalar", "name": "String"}, "ttl_days": 30}],
+          "shortcuts": [{"keys": "mod+k", "action": "open_search", "scope": "panel"}],
+          "overlays": [{"name": "finding_detail", "kind": "drawer", "dismissible": true, "blocking": true, "description": null}]
+        }
+      }
+    type_ref_kinds: >
+      {"kind":"scalar","name":<one of String Integer Decimal Boolean Date DateTime Id Money Percent Url Email>},
+      {"kind":"named","name":<type in this contract>}, {"kind":"ref","module":<m>,"name":<type>},
+      {"kind":"list","of":<ref>}, {"kind":"map","of":<ref>} (keys are strings), {"kind":"one_of","names":[<type>...]},
+      {"kind":"inline","fields":[<field>...]} (only for operation input/output, event payload and a type option given
+      as a Hash). A panel with no panel block has "panel": null.
+
+  shape_json:
+    producer: slice_a
+    consumers: [slice_b, slice_d]
+    form: >
+      Exactly the spec's shape_json (schema dovetail.shape/v1) with these precise encodings. Keys sorted, written with
+      Dovetail::CanonicalJSON.pretty. Ids are qualified: operations "<module>.<op>", events "<module>.<event>",
+      views' data_operation "<module>.<op>". Arrays: routes in declaration order; operations sorted; emits and consumes
+      sorted; capabilities are the declared ones, sorted; slots, views, overlays, storage_keys and shortcuts in
+      declaration order. tokens is ["default"] for tokens
+      :default, else the listed family names. rules_profile is "strict" unless the panel says rules_profile :relaxed
+      (not a DSL statement in 0.1.0, so always "strict"). A contract with no panel block produces no shape file.
+    example: |
+      {"capabilities":["navigation","overlay","storage"],"contract_version":2,
+       "events":{"consumes":["context.settings_changed"],"emits":["finance.finding_selected"]},
+       "module":"finance","operations":["finance.findings","finance.margin"],
+       "overlays":[{"blocking":true,"dismissible":true,"kind":"drawer","name":"finding_detail"}],
+       "routes":["/finance","/finance/findings/:id"],"rules_profile":"strict","schema":"dovetail.shape/v1",
+       "shortcuts":[],"slots":[{"max_width":null,"min_width":480,"name":"main","size":"main"},
+       {"max_width":null,"min_width":null,"name":"summary","size":"tile"}],
+       "storage_keys":[{"name":"period","ttl_days":30}],"tokens":["default"],
+       "views":[{"data_operation":"finance.findings","name":"dashboard","states":["loading","empty","error","unavailable","ready"]},
+                {"data_operation":"finance.margin","name":"margin_tile","states":["loading","empty","error","unavailable","ready"]}]}
+    note: >
+      The object carries "schema":"dovetail.shape/v1" as a key (the spec lists it as the file's schema id). The
+      signature covers Dovetail::CanonicalJSON.dump of the parsed object, so pretty printing never affects it.
+
+  registry_entry_json:
+    producer: slice_a
+    consumers: [slice_d]
+    path: <out>/registry/<module>.json
+    example: |
+      {
+        "schema": "dovetail.registry-entry/v1",
+        "module": "finance",
+        "title": "Finance",
+        "contract_version": 2,
+        "schema_file": "schema/finance.schema.json",
+        "slots": [{"name": "main", "size": "main", "min_width": 480, "max_width": null}],
+        "routes": ["/finance", "/finance/findings/:id"],
+        "overlays": [{"name": "finding_detail", "kind": "drawer", "dismissible": true, "blocking": true}],
+        "shortcuts": [],
+        "storage_keys": [{"name": "period", "ttl_days": 30, "schema": {"$ref": "finance.schema.json#/$defs/storage.period"}}],
+        "emits": [{"id": "finance.finding_selected", "payload_schema": {"$ref": "finance.schema.json#/$defs/event.finding_selected.payload"}}],
+        "consumes": ["context.settings_changed"],
+        "operations": [{"id": "finance.findings", "name": "findings", "timeout_ms": 10000, "idempotent": false,
+                        "errors": ["unavailable"],
+                        "input_schema": {"$ref": "finance.schema.json#/$defs/operation.findings.input"},
+                        "output_schema": {"$ref": "finance.schema.json#/$defs/operation.findings.output"}}],
+        "views": [{"name": "dashboard", "data_operation": "finance.findings", "states": ["loading", "empty", "error", "unavailable", "ready"]}],
+        "props": [{"name": "tenant", "required": true, "schema": {"$ref": "finance.schema.json#/$defs/prop.tenant"}}],
+        "depends_on": [{"module": "context", "requirement": ">= 1"}]
+      }
+    title_rule: The module id with _ replaced by a space and the first letter of each word capitalised (people_operations -> People Operations).
+
+  json_schema:
+    producer: slice_a
+    consumers: [slice_c, slice_d]
+    document: >
+      <out>/schema/<module>.schema.json is one JSON Schema 2020-12 document: {"$schema":
+      "https://json-schema.org/draft/2020-12/schema", "$id": "<module>.schema.json", "title": <title>, "$defs": {...}}.
+      $defs keys - each contract type by its name; "operation.<op>.input" and "operation.<op>.output";
+      "event.<event>.payload"; "storage.<key>"; "prop.<name>"; and the scalar helpers it uses, named "_Decimal", "_Money",
+      "_Id", "_CurrencyCode", "_Percent". A cross-module ref(:other, :type) is {"$ref": "<other>.schema.json#/$defs/<type>"}.
+    mapping:
+      String: '{"type":"string"}'
+      Integer: '{"type":"integer"}'
+      Decimal: '{"$ref":"#/$defs/_Decimal"} where _Decimal is {"type":"string","pattern":"^-?[0-9]+(\\.[0-9]+)?$"}'
+      Percent: '{"$ref":"#/$defs/_Percent"}, same as _Decimal'
+      Boolean: '{"type":"boolean"}'
+      Date: '{"type":"string","format":"date"}'
+      DateTime: '{"type":"string","format":"date-time"}'
+      Id: '{"$ref":"#/$defs/_Id"} where _Id is {"type":"string","minLength":1}'
+      Money: '{"$ref":"#/$defs/_Money"} where _Money is {"type":"object","required":["amount","currency"],"additionalProperties":false,"properties":{"amount":{"$ref":"#/$defs/_Decimal"},"currency":{"$ref":"#/$defs/_CurrencyCode"}}} and _CurrencyCode is {"type":"string","pattern":"^[A-Z]{3}$"}'
+      Url: '{"type":"string","format":"uri"}'
+      Email: '{"type":"string","format":"email"}'
+      list: '{"type":"array","items":<of>}'
+      map: '{"type":"object","additionalProperties":<of>}'
+      one_of: >-
+        {"oneOf":[...]} with one entry per named type, each the named type's object schema inlined with an added
+        required property "kind" whose schema is {"const":"<type name>"}
+      named: '{"$ref":"#/$defs/<name>"}'
+      object_type: '{"type":"object","additionalProperties":false,"properties":{...},"required":[...]}; required lists fields with required true and no default'
+      nullable: '{"anyOf":[<schema>,{"type":"null"}]}'
+      options: >-
+        description -> "description"; default -> "default"; enum -> "enum"; min/max -> "minimum"/"maximum" for Integer,
+        "minLength"/"maxLength" for String, Url and Email, "minItems"/"maxItems" for list, and "x-dovetail-min"/"x-dovetail-max"
+        for Decimal, Percent and Money; pattern -> "pattern"; format iso_date -> "format":"date", iso_datetime ->
+        "format":"date-time", currency_code -> pattern ^[A-Z]{3}$, locale -> pattern ^[a-z]{2,3}(-[A-Z]{2})?$,
+        country_code -> pattern ^[A-Z]{2}$, sha256 -> pattern ^[0-9a-f]{64}$; sensitive -> "x-dovetail-sensitive":true;
+        deprecated -> "deprecated":true and "x-dovetail-replacement":<the string>.
+
+  typescript_and_client:
+    producer: slice_a
+    consumers: [slice_c, slice_d]
+    types_file: >
+      <out>/types/<module>.d.ts. First line: import type { Decimal, IsoDate, IsoDateTime, Id, CurrencyCode, Money } from
+      '@dovetail/runtime'; (import only those used). Then, for a consumed event whose producer is in the same compile,
+      import type { <PayloadType> } from './<producer>'. Names are PascalCase: type margin -> Margin; inline operation
+      input -> <Op>Input, inline output -> <Op>Output; inline event payload -> <Event>Payload; storage key value type
+      is used inline. Every property is readonly. Optional fields (required false or with a default) use ?. The spec's
+      mapping table applies; Percent is Decimal; Url and Email are string. one_of(:a, :b) -> (A & { readonly kind: 'a' })
+      | (B & { readonly kind: 'b' }). Then these exports, with <M> the PascalCase module id -
+      export type <M>EmittedEvent = 'finance.finding_selected' | ...; (never when none);
+      export interface <M>EventPayloads { readonly 'finance.finding_selected': FindingSelectedPayload };
+      export type <M>ConsumedEvent = 'context.settings_changed' | ...;
+      export type <M>Event = { readonly event: 'finance.finding_selected'; readonly payload: FindingSelectedPayload } | ...;
+      export interface <M>Props { ...declared props } (export type <M>Props = Record<string, never> when none);
+      export interface <M>ModuleTypes { overlays: 'finding_detail' | ...; routes: '/finance' | '/finance/findings/:id';
+      storage: { period: string }; emits: { 'finance.finding_selected': FindingSelectedPayload }; consumes:
+      { 'context.settings_changed': SettingsChangedPayload }; shortcuts: 'mod+k' | ...; props: <M>Props }.
+      Use never for an empty union and Record<string, never> for an empty map. A consumed event whose producer is not in
+      the compile has payload type unknown.
+    client_file: |
+      <out>/client/<module>.ts, exactly this shape (example for finance):
+      import { callOperation, type Result, type CommonErrorCode } from '@dovetail/runtime';
+      import type { Margin, MarginInput, Finding, FindingsInput } from '../types/finance';
+
+      export const finance = {
+        margin(input: MarginInput): Promise<Result<Margin, 'insufficient_input' | CommonErrorCode>> {
+          return callOperation('finance', 'margin', input, { timeout_ms: 10000, idempotent: false, contract_version: 2 });
+        },
+        findings(input: FindingsInput): Promise<Result<readonly Finding[], 'unavailable' | CommonErrorCode>> {
+          return callOperation('finance', 'findings', input, { timeout_ms: 10000, idempotent: false, contract_version: 2 });
+        },
+      } as const;
+
+      export default finance;
+    notes: >
+      Operations are emitted in sorted order. An operation with no input declares input: Record<string, never> and the
+      function takes no argument: findings(): ... callOperation('finance', 'findings', {}, ...). timeout_ms defaults to
+      10000 and idempotent to false when the contract omits them. The exported object name is the module id in
+      camelCase (people_operations -> peopleOperations).
+
+  signing:
+    owner: slice_b
+    consumers: [slice_a]
+    api: >
+      Dovetail::Signing.sign(shape_hash, private_key_pem) -> base64 signature string (strict_encode64).
+      Dovetail::Signing.verify(shape_hash, signature_b64, public_key_pems) -> :ok | :bad_signature.
+      Dovetail::Signing.signature_path(shape_path) -> the .json suffix replaced by .sig.
+      Both use OpenSSL::PKey::RSA#sign_pss / #verify_pss with "SHA256", salt_length: :digest, mgf1_hash: "SHA256",
+      over Dovetail::CanonicalJSON.dump(shape_hash). verify returns :ok if any key verifies.
+
+  config:
+    owner: slice_d
+    consumers: [slice_b]
+    api: >
+      Dovetail::Config.find(start_dir) -> Dovetail::Config or nil, found by walking up from start_dir to the first
+      dovetail.yml. Dovetail::Config.load(path). Readers: root (absolute app root), contracts (array of absolute contract
+      paths from the glob), panels (array of absolute panel dirs), shell (absolute), out (absolute), public_keys (array of
+      absolute PEM paths), require_signed (Boolean), rules_profile ("strict" or "relaxed"), tokens (absolute path or nil
+      for the built-in vocabulary), layout (absolute), node (a path, "node", or false), themes (array of absolute theme JSON
+      paths from the glob, default <shell>/themes/*.json). Defaults are the spec's configuration_file defaults.
+
+  checker_api:
+    owner: slice_b
+    consumers: [slice_d]
+    api: >
+      Dovetail::Shape.check(panel_dir:, shape:, profile: "strict", changed: nil) -> Dovetail::Shape::Report, where shape
+      is the parsed shape Hash. Report#findings is an Array of Dovetail::Shape::Finding (Struct with file, line, column,
+      rule, seam, severity, message, fix; file relative to panel_dir), Report#errors and Report#warnings are Integers,
+      Report#to_h gives the spec's JSON form. It raises Dovetail::Error D-CHK-001 when a file cannot be read.
+
+  contract_api:
+    owner: slice_a
+    consumers: [slice_d]
+    api: >
+      Dovetail::Contract.load_file(path) -> Dovetail::Contract::Model (raises Dovetail::Error D-CON-001).
+      Dovetail::Contract.validate(models) -> Array of Dovetail::Contract::Finding (Struct with rule, severity, module_id,
+      message), checking C001 to C006 across the whole set; a consumed event or depends_on whose module is not in the set
+      gives a warning, not an error. Dovetail::Contract.diff(old_model_hash, new_model_hash) -> Array of
+      Dovetail::Contract::Change (Struct with kind :breaking or :compatible, description) plus
+      Dovetail::Contract.version_ok?(old_hash, new_hash, changes) -> Boolean (false when any breaking change keeps the
+      version; this is C007). Model#to_h returns the model_json Hash. Dovetail::Compiler.compile(models, out:) writes every
+      output for every model and returns an Array of the written paths (relative to out); it raises Dovetail::Error
+      D-CON-002 with details[:findings] when validation has errors. Dovetail::Compiler::Brief.render(model) ->
+      String and Dovetail::Compiler::Brief.render_shape(shape_hash) -> String (the shape-only brief).
+
+  token_vocabulary:
+    owner: slice_b
+    consumers: [slice_c, slice_d]
+    path: lib/dovetail/tokens/vocabulary.yml
+    api: >
+      Dovetail::Tokens.vocabulary(path = nil) -> the parsed Hash. Dovetail::Tokens.css_vars -> Array of every family
+      custom property name (with --). Dovetail::Tokens.host_vars. Dovetail::Tokens.theme_keys -> css_vars plus host_vars
+      without the leading --, which is exactly the key set every theme file's tokens must have.
+      Dovetail::Tokens::ClassGrammar.classify(class_name) -> [:ok] | [:refused, rule_id, suggestion_or_nil].
+    content: |
+      schema: dovetail.tokens/v1
+      families:
+        color:
+          css_var: "--{token}"
+          tokens: [surface, surface-2, surface-3, text, text-dim, text-faint, accent, accent-hover, accent-contrast, border, border-strong, success, warning, danger, info]
+        space:
+          css_var: "--space-{token}"
+          tokens: ["0", "0.5", "1", "1.5", "2", "3", "4", "5", "6", "8", "10", "12", "16"]
+        radius:
+          css_var: "--corner-{token}"
+          tokens: [none, sm, md, lg, xl, full]
+        type:
+          css_var: "--type-{token}"
+          line_height_var: "--type-{token}-leading"
+          tokens: [xs, sm, base, lg, xl, 2xl, 3xl]
+        weight:
+          css_var: "--weight-{token}"
+          tokens: [regular, medium, semibold, bold]
+        shadow:
+          css_var: "--elevation-{token}"
+          tokens: [none, sm, md, lg]
+        motion:
+          css_var: "--motion-{token}"
+          tokens: [fast, base, slow]
+          extra_vars: ["--motion-ease"]
+      css_var_rule: A dot in a token is written as an underscore in its custom property, so space 0.5 is --space-0_5.
+      host_vars: ["--scrim", "--accent-soft", "--danger-contrast", "--family-sans", "--family-mono", "--family-display", "--max-width"]
+      variants:
+        pseudo: [hover, focus, focus-visible, active, disabled, dark, motion-reduce]
+        breakpoints: [sm, md, lg, xl]
+        containers: ["@sm", "@md", "@lg", "@xl"]
+        aria: [busy, checked, current, disabled, expanded, hidden, invalid, pressed, readonly, required, selected]
+        data_pattern: "data-[a-z][a-z0-9-]*"
+      utilities:
+        color:
+          prefixes: [bg, text, border, border-t, border-r, border-b, border-l, border-x, border-y, border-s, border-e, ring, ring-offset, outline, divide, fill, stroke, placeholder, caret, decoration, accent]
+          keywords: [transparent, current, inherit]
+          opacity_modifiers: ["5", "10", "15", "20", "25", "30", "40", "50", "60", "70", "75", "80", "90", "95"]
+        space:
+          prefixes: [p, px, py, pt, pr, pb, pl, ps, pe, m, mx, my, mt, mr, mb, ml, ms, me, gap, gap-x, gap-y, space-x, space-y, inset, inset-x, inset-y, top, right, bottom, left, start, end, w, h, size, min-w, min-h, max-w, max-h, basis, translate-x, translate-y, scroll-m, scroll-p]
+          negatable: [m, mx, my, mt, mr, mb, ml, ms, me, inset, inset-x, inset-y, top, right, bottom, left, start, end, translate-x, translate-y, space-x, space-y]
+          extra_values: [px]
+          keywords:
+            m: [auto]
+            mx: [auto]
+            my: [auto]
+            mt: [auto]
+            mr: [auto]
+            mb: [auto]
+            ml: [auto]
+            ms: [auto]
+            me: [auto]
+            inset: [auto, full, "1/2"]
+            inset-x: [auto, full, "1/2"]
+            inset-y: [auto, full, "1/2"]
+            top: [auto, full, "1/2"]
+            right: [auto, full, "1/2"]
+            bottom: [auto, full, "1/2"]
+            left: [auto, full, "1/2"]
+            start: [auto, full, "1/2"]
+            end: [auto, full, "1/2"]
+            w: [auto, full, min, max, fit, "1/2", "1/3", "2/3", "1/4", "3/4", "1/5", "2/5", "3/5", "4/5"]
+            h: [auto, full, min, max, fit]
+            size: [auto, full, min, max, fit]
+            min-w: [full, min, max, fit]
+            min-h: [full, min, max, fit]
+            max-w: [none, full, prose, min, max, fit]
+            max-h: [none, full, min, max, fit]
+            basis: [auto, full, "1/2", "1/3", "2/3", "1/4", "3/4"]
+            translate-x: [full, "1/2"]
+            translate-y: [full, "1/2"]
+        radius:
+          prefixes: [rounded, rounded-t, rounded-r, rounded-b, rounded-l, rounded-s, rounded-e, rounded-tl, rounded-tr, rounded-br, rounded-bl]
+        type:
+          size_prefix: text
+          weight_prefix: font
+        shadow:
+          prefix: shadow
+        motion:
+          prefix: duration
+        numbered:
+          grid-cols: {from: 1, to: 12, extra: [none, subgrid]}
+          grid-rows: {from: 1, to: 6, extra: [none, subgrid]}
+          col-span: {from: 1, to: 12, extra: [full]}
+          col-start: {from: 1, to: 13, extra: [auto]}
+          col-end: {from: 1, to: 13, extra: [auto]}
+          row-span: {from: 1, to: 6, extra: [full]}
+          row-start: {from: 1, to: 7, extra: [auto]}
+          row-end: {from: 1, to: 7, extra: [auto]}
+          order: {from: 1, to: 12, extra: [first, last, none]}
+          line-clamp: {from: 1, to: 6, extra: [none]}
+        valued:
+          opacity: ["0", "5", "10", "15", "20", "25", "30", "40", "50", "60", "70", "75", "80", "90", "95", "100"]
+          scale: ["95", "100", "105"]
+          rotate: ["0", "45", "90", "180"]
+        static: [flex, inline-flex, grid, inline-grid, block, inline-block, inline, hidden, contents, flow-root, table, table-row, table-cell, table-header-group, table-row-group, flex-row, flex-row-reverse, flex-col, flex-col-reverse, flex-wrap, flex-nowrap, flex-wrap-reverse, flex-1, flex-auto, flex-initial, flex-none, grow, grow-0, shrink, shrink-0, items-start, items-end, items-center, items-baseline, items-stretch, justify-start, justify-end, justify-center, justify-between, justify-around, justify-evenly, justify-stretch, justify-items-start, justify-items-end, justify-items-center, justify-items-stretch, justify-self-auto, justify-self-start, justify-self-end, justify-self-center, justify-self-stretch, content-start, content-end, content-center, content-between, content-around, content-evenly, content-stretch, self-auto, self-start, self-end, self-center, self-stretch, self-baseline, place-items-start, place-items-end, place-items-center, place-items-stretch, place-content-start, place-content-end, place-content-center, place-content-between, place-content-stretch, place-self-auto, place-self-start, place-self-end, place-self-center, place-self-stretch, truncate, overflow-auto, overflow-hidden, overflow-visible, overflow-scroll, overflow-clip, overflow-x-auto, overflow-x-hidden, overflow-x-scroll, overflow-x-clip, overflow-y-auto, overflow-y-hidden, overflow-y-scroll, overflow-y-clip, relative, absolute, static, sticky, isolate, isolation-auto, visible, invisible, collapse, object-contain, object-cover, object-fill, object-none, object-scale-down, object-center, object-top, aspect-auto, aspect-square, aspect-video, sr-only, not-sr-only, cursor-auto, cursor-default, cursor-pointer, cursor-wait, cursor-text, cursor-move, cursor-not-allowed, cursor-grab, cursor-grabbing, cursor-help, select-none, select-text, select-all, select-auto, pointer-events-none, pointer-events-auto, resize, resize-none, resize-x, resize-y, appearance-none, list-none, list-disc, list-decimal, list-inside, list-outside, whitespace-normal, whitespace-nowrap, whitespace-pre, whitespace-pre-line, whitespace-pre-wrap, whitespace-break-spaces, break-normal, break-all, break-keep, wrap-break-word, wrap-anywhere, wrap-normal, text-left, text-center, text-right, text-justify, text-start, text-end, align-baseline, align-top, align-middle, align-bottom, align-text-top, align-text-bottom, uppercase, lowercase, capitalize, normal-case, italic, not-italic, underline, overline, line-through, no-underline, underline-offset-1, underline-offset-2, underline-offset-4, tabular-nums, lining-nums, proportional-nums, oldstyle-nums, slashed-zero, normal-nums, antialiased, subpixel-antialiased, text-ellipsis, text-clip, text-wrap, text-nowrap, text-balance, text-pretty, font-sans, font-mono, leading-none, leading-tight, leading-snug, leading-normal, leading-relaxed, tracking-tight, tracking-normal, tracking-wide, border, border-0, border-2, border-4, border-t, border-r, border-b, border-l, border-x, border-y, border-s, border-e, border-t-0, border-r-0, border-b-0, border-l-0, border-t-2, border-r-2, border-b-2, border-l-2, border-solid, border-dashed, border-dotted, border-none, divide-x, divide-y, divide-x-0, divide-y-0, divide-x-2, divide-y-2, divide-solid, divide-dashed, ring, ring-0, ring-1, ring-2, ring-inset, ring-offset-0, ring-offset-1, ring-offset-2, outline, outline-none, outline-hidden, outline-0, outline-1, outline-2, outline-offset-0, outline-offset-1, outline-offset-2, outline-offset-4, outline-solid, outline-dashed, transition, transition-none, transition-all, transition-colors, transition-opacity, transition-shadow, transition-transform, ease-theme, animate-none, animate-pulse, animate-spin, origin-center, origin-top, origin-bottom, origin-left, origin-right, origin-top-left, origin-top-right, snap-x, snap-y, snap-mandatory, snap-proximity, snap-start, snap-center, snap-end, snap-none, scroll-smooth, overscroll-contain, overscroll-none, "@container"]
+      refused:
+        S-OVL-001: [fixed]
+        S-LAY-002: "z-* and -z-* with any value"
+        S-LAY-001: "h-screen, w-screen, size-screen, min-h-screen, max-h-screen, min-w-screen, max-w-screen, and any size utility whose value is dvh, svh, lvh, dvw, svw or lvw"
+        S-CSS-002: "any class containing [ or ] (arbitrary values, arbitrary variants, arbitrary properties) and any class ending in !"
+      suggestions:
+        palette_hues:
+          danger: [red, rose]
+          success: [green, emerald, lime, teal]
+          warning: [yellow, amber, orange]
+          info: [blue, sky, cyan, indigo]
+          accent: [violet, purple, fuchsia, pink]
+        neutral_hues: [gray, slate, zinc, neutral, stone]
+        neutral_by_prefix:
+          text: {"50-300": text-faint, "400-600": text-dim, "700-950": text}
+          bg: {"50-100": surface-2, "200-300": surface-3, "400-950": surface}
+          border: {"50-300": border, "400-950": border-strong}
+          other: {"50-400": border, "500-950": border-strong}
+        keywords:
+          white: {bg: surface, text: accent-contrast, other: border}
+          black: {bg: surface, text: text, other: border-strong}
+        renames:
+          font-normal: font-regular
+          font-light: font-regular
+          font-thin: font-regular
+          font-extrabold: font-bold
+          font-black: font-bold
+          rounded: rounded-md
+          rounded-2xl: rounded-xl
+          rounded-3xl: rounded-xl
+          shadow: shadow-md
+          shadow-xs: shadow-sm
+          shadow-xl: shadow-lg
+          shadow-2xl: shadow-lg
+          text-4xl: text-3xl
+          text-5xl: text-3xl
+          text-6xl: text-3xl
+          duration-75: duration-fast
+          duration-100: duration-fast
+          duration-150: duration-fast
+          duration-200: duration-base
+          duration-300: duration-base
+          duration-500: duration-slow
+          duration-700: duration-slow
+        space_rule: The nearest step in the space family, ties to the smaller step (p-7 suggests p-6).
+
+  css_custom_properties: >
+    Every token's value lives in a CSS custom property named by vocabulary.yml's css_var patterns; host tokens are the
+    host_vars. Runtime components, the shell template and panels' style blocks read them with var(). A theme file's
+    tokens object has one key per name without the leading -- (so "surface-2", "space-0_5", "corner-lg", "type-sm",
+    "type-sm-leading", "weight-medium", "elevation-md", "motion-fast", "motion-ease", "scrim", "family-sans", ...).
+
+  theme_file:
+    producer: slice_d
+    consumers: [slice_c]
+    form: |
+      {"id": "apple-noir", "name": "Apple Noir", "color_scheme": "dark", "tokens": {"surface": "#0a0908", "...": "every theme key"}}
+
+  runtime_public_api:
+    owner: slice_c
+    consumers: [slice_a, slice_d]
+    main_entry: >
+      '@dovetail/runtime' exports - DovetailShell, Slot, View, States, Overlay (components); useNavigation;
+      createHttpTransport, createDevelopmentTransport, callOperation; openOverlay, toast, navigate, link, useRoute, store,
+      emit, on, shortcut, every, after, frame, subscribe, useId, useProps, useContractVersion, t, formatNumber,
+      formatMoney, formatDate, formatPercent (these resolve the calling panel from Svelte context during component
+      initialisation and otherwise throw an Error reading "Dovetail: <name> was called outside a panel"; panel code normally reaches the bound
+      versions through the binding module instead); all components; and the types Decimal, IsoDate, IsoDateTime, Id,
+      CurrencyCode, Money, Result, CommonErrorCode, DovetailErrorValue, OverlayHandle, Transport, CallOptions, Registry,
+      RegistryPanel, Theme, ModuleTypes, SlotSize, OverlayKind.
+    internal_entry: >
+      '@dovetail/runtime/internal' exports createPanelApi and re-exports every type above.
+    components_entry: >
+      '@dovetail/runtime/components' exports Button, IconButton, Field, TextInput, NumberInput, Select, Checkbox, Switch,
+      Tabs, Table, Card, Badge, Stat, Skeleton, EmptyState, ErrorState, UnavailableState, Tooltip, View, States, Overlay.
+    icons_entry: "'@dovetail/runtime/icons' re-exports every icon component of phosphor-svelte."
+    types: |
+      export type Decimal = string & { readonly __brand: 'Decimal' };
+      export type IsoDate = string & { readonly __brand: 'IsoDate' };
+      export type IsoDateTime = string & { readonly __brand: 'IsoDateTime' };
+      export type Id = string & { readonly __brand: 'Id' };
+      export type CurrencyCode = string & { readonly __brand: 'CurrencyCode' };
+      export interface Money { readonly amount: Decimal; readonly currency: CurrencyCode }
+      export type CommonErrorCode = 'invalid_input' | 'contract_violation' | 'not_found' | 'unavailable' | 'not_built' | 'contract_version_mismatch' | 'rate_limited' | 'internal';
+      export interface DovetailErrorValue<E extends string = never> { readonly code: E | CommonErrorCode; readonly message: string; readonly path?: string; readonly retry_after_s?: number; readonly versions?: { readonly expected: number; readonly actual: number } }
+      export type Result<T, E extends string = never> =
+        | { readonly ok: true; readonly data: T; readonly contract_version: number }
+        | { readonly ok: false; readonly error: DovetailErrorValue<E>; readonly contract_version?: number };
+      export interface CallOptions { readonly timeout_ms: number; readonly idempotent: boolean; readonly contract_version: number }
+      export interface ServerEventMessage { readonly id: string; readonly event: string; readonly data: unknown; readonly contract_version: number }
+      export interface Transport {
+        call(module: string, operation: string, input: unknown, options: CallOptions): Promise<Result<unknown, string>>;
+        subscribe(stream: 'events', handler: (message: ServerEventMessage) => void): () => void;
+      }
+      export function callOperation<T, E extends string = never>(module: string, operation: string, input: unknown, options: CallOptions): Promise<Result<T, E>>;
+      export type SlotSize = 'full' | 'main' | 'aside' | 'tile' | 'strip';
+      export type Region = 'header' | 'nav' | 'main' | 'aside' | 'footer' | 'dock';
+      export type OverlayKind = 'modal' | 'drawer' | 'popover' | 'menu' | 'toast';
+      export type ViewStatus = 'loading' | 'empty' | 'error' | 'unavailable' | 'ready' | 'not_built';
+      export type JsonSchema = Record<string, unknown>;
+      export interface Theme { readonly id: string; readonly name: string; readonly color_scheme: 'light' | 'dark'; readonly tokens: Readonly<Record<string, string>> }
+      export interface ModuleTypes { overlays: string; routes: string; storage: Record<string, unknown>; emits: Record<string, unknown>; consumes: Record<string, unknown>; shortcuts: string; props: Record<string, unknown> }
+      export interface OverlayHandle<R = unknown, P = Record<string, unknown>> { readonly id: string; close(result?: R): void; readonly closed: Promise<R | undefined>; update(props: Partial<P>): void }
+      export interface RegistryPanel {
+        readonly module: string; readonly title: string; readonly contract_version: number;
+        readonly component: import('svelte').Component<any>;
+        readonly slots: ReadonlyArray<{ name: string; size: SlotSize; min_width: number | null; max_width: number | null }>;
+        readonly routes: readonly string[];
+        readonly overlays: ReadonlyArray<{ name: string; kind: OverlayKind; dismissible: boolean; blocking: boolean }>;
+        readonly shortcuts: ReadonlyArray<{ keys: string; action: string; scope: 'panel' | 'view' }>;
+        readonly storage_keys: ReadonlyArray<{ name: string; ttl_days: number | null; schema: JsonSchema }>;
+        readonly emits: ReadonlyArray<{ id: string; payload_schema: JsonSchema }>;
+        readonly consumes: readonly string[];
+        readonly operations: ReadonlyArray<{ id: string; name: string; timeout_ms: number; idempotent: boolean; errors: readonly string[]; input_schema: JsonSchema; output_schema: JsonSchema }>;
+        readonly views: ReadonlyArray<{ name: string; data_operation: string; states: readonly string[] }>;
+        readonly props: ReadonlyArray<{ name: string; required: boolean; schema: JsonSchema }>;
+        readonly messages: Readonly<Record<string, Readonly<Record<string, string>>>>;
+      }
+      export interface Registry {
+        readonly schema: 'dovetail.registry/v1';
+        readonly development: boolean;
+        readonly layout: {
+          readonly slots: ReadonlyArray<{ name: string; size: SlotSize; region: Region; heading_level: number }>;
+          readonly navigation: ReadonlyArray<{ label_key: string; module: string; route: string }>;
+          readonly breakpoints: Readonly<Record<'sm' | 'md' | 'lg' | 'xl', number>>;
+          readonly home: string | null;
+        };
+        readonly themes: readonly Theme[];
+        readonly panels: readonly RegistryPanel[];
+        readonly schemas: Readonly<Record<string, JsonSchema>>;
+        readonly messages: Readonly<Record<string, Readonly<Record<string, string>>>>;
+      }
+    create_panel_api: |
+      export function createPanelApi<M extends ModuleTypes>(module: string): {
+        openOverlay<P extends Record<string, unknown>, R = unknown>(name: M['overlays'], component: import('svelte').Component<P & { close: (result?: R) => void }>, props: P): OverlayHandle<R, P>;
+        toast(message: string, options?: { tone?: 'info' | 'success' | 'warning' | 'danger'; duration_ms?: number }): void;
+        navigate(route: M['routes'], params?: Record<string, string>, options?: { replace?: boolean }): void;
+        link(route: M['routes'], params?: Record<string, string>): string;
+        useRoute(): { readonly pattern: M['routes'] | null; readonly params: Readonly<Record<string, string>>; readonly query: Readonly<Record<string, string>> };
+        store<K extends keyof M['storage'] & string>(key: K): { get(): M['storage'][K] | undefined; set(value: M['storage'][K]): void; clear(): void };
+        emit<E extends keyof M['emits'] & string>(event: E, payload: M['emits'][E]): void;
+        on<E extends keyof M['consumes'] & string>(event: E, handler: (payload: M['consumes'][E]) => void): () => void;
+        shortcut(keys: M['shortcuts'], handler: (event: KeyboardEvent) => void): () => void;
+        every(ms: number, fn: () => void): () => void;
+        after(ms: number, fn: () => void): () => void;
+        frame(fn: (t: number) => void): () => void;
+        subscribe<T>(source: { subscribe(run: (value: T) => void): (() => void) | { unsubscribe(): void } } | AsyncIterable<T>, fn: (value: T) => void): () => void;
+        useId(name: string): string;
+        useProps(): M['props'];
+        useContractVersion(): number;
+        t(key: string, params?: Record<string, string | number>): string;
+        formatNumber(value: number | string, options?: Intl.NumberFormatOptions): string;
+        formatMoney(money: Money): string;
+        formatDate(value: string | Date, style?: 'short' | 'medium' | 'long'): string;
+        formatPercent(value: string | number): string;
+      };
+
+  binding_module:
+    producer: slice_d
+    consumers: [slice_c]
+    path: <out>/bind/<module>.ts
+    content_example: |
+      import { createPanelApi } from '@dovetail/runtime/internal';
+      import type { FinanceModuleTypes } from '$generated/types/finance';
+
+      export * from '@dovetail/runtime/components';
+      export type { Decimal, IsoDate, IsoDateTime, Id, CurrencyCode, Money, Result, CommonErrorCode, OverlayHandle } from '@dovetail/runtime/internal';
+
+      const api = createPanelApi<FinanceModuleTypes>('finance');
+
+      export const { openOverlay, toast, navigate, link, useRoute, store, emit, on, shortcut, every, after, frame, subscribe, useId, useProps, useContractVersion, t, formatNumber, formatMoney, formatDate, formatPercent } = api;
+    resolution: >
+      In the build and dev configurations, a resolveId hook maps the import source '@dovetail/runtime' to
+      <out>/bind/<module>.ts when the importer's absolute path is inside that module's panel directory, and to the runtime
+      main entry otherwise. '@dovetail/runtime/components', '/internal' and '/icons' always resolve to the runtime.
+      Aliases - $generated -> <out>/generated, $registry -> <out>/registry.generated.ts, $dovetail -> <out>.
+
+  registry_generated_ts:
+    producer: slice_d
+    consumers: [slice_c]
+    path: <out>/registry.generated.ts
+    content_example: |
+      import type { Registry } from '@dovetail/runtime/internal';
+      import FinancePanel from '/abs/app/modules/finance/panel/src/Panel.svelte';
+      import financeSchema from '/abs/app/.dovetail/generated/schema/finance.schema.json';
+      import financeMessagesEnUS from '/abs/app/modules/finance/panel/messages/en-US.json';
+      import shellMessagesEnUS from '/abs/app/ui/messages/en-US.json';
+      import themeAppleNoir from '/abs/app/ui/themes/apple-noir.json';
+
+      export const registry: Registry = {
+        schema: 'dovetail.registry/v1',
+        development: false,
+        layout: { slots: [], navigation: [], breakpoints: { sm: 640, md: 768, lg: 1024, xl: 1280 }, home: 'finance' },
+        themes: [themeAppleNoir],
+        panels: [{ module: 'finance', title: 'Finance', contract_version: 2, component: FinancePanel, slots: [], routes: [], overlays: [], shortcuts: [], storage_keys: [], emits: [], consumes: [], operations: [], views: [], props: [], messages: { 'en-US': financeMessagesEnUS } }],
+        schemas: { finance: financeSchema },
+        messages: { 'en-US': shellMessagesEnUS },
+      };
+
+      export default registry;
+    note: The empty arrays above are placeholders in the example only; the fuser fills them from each registry entry and layout.yml. Schemas in panels stay as $ref objects; the runtime resolves them against schemas.
+
+  development_hooks:
+    owner: slice_c
+    consumers: [slice_d]
+    rule: >
+      When registry.development is true, DovetailShell installs window.__dovetail (and removes it on destroy). Every
+      method is synchronous unless it returns a Promise. Module and view names are the contract ids.
+    interface: |
+      interface DovetailDevHooks {
+        readonly version: string;
+        ready(): boolean;
+        panels(): Array<{ module: string; title: string; slots: string[]; mounted: boolean; crashed: boolean; failures: number; parked: boolean }>;
+        overlays: {
+          open(module: string, name: string): Promise<string>;
+          stack(): Array<{ id: string; module: string; name: string; kind: string; blocking: boolean; dismissible: boolean }>;
+          close(id: string): void;
+        };
+        scrollLocked(): boolean;
+        focusTrapTop(): string | null;
+        navigate(path: string): Promise<void>;
+        currentRoute(): { path: string; module: string | null; pattern: string | null; params: Record<string, string> };
+        routeLog(): Array<{ module: string; pattern: string; path: string }>;
+        clearRouteLog(): void;
+        emit(eventId: string, payload?: unknown): void;
+        eventLog(): Array<{ event: string; receiver: string; origin: 'local' | 'server' | 'hook' }>;
+        clearEventLog(): void;
+        fixture(schemaRef: unknown): unknown;
+        forceState(module: string, view: string, state: 'loading' | 'empty' | 'error' | 'unavailable' | 'ready' | null): void;
+        viewStates(module: string): Record<string, string>;
+        unmount(module: string): Promise<void>;
+        mount(module: string): Promise<void>;
+        leaks(module: string): { timers: number; intervals: number; frames: number; listeners: number; subscriptions: number; shortcuts: number; overlays: number };
+        crash(module: string): void;
+        slotRects(): Array<{ module: string; slot: string; rect: { x: number; y: number; width: number; height: number }; scroll: { width: number; height: number } }>;
+        setSlotWidth(slot: string, px: number | null): void;
+        runtimeViolations(): Array<{ module: string; code: string; message: string }>;
+        transportStats(): Record<string, unknown>;
+        consoleErrors(): string[];
+      }
+    semantics: >
+      overlays.open mounts a runtime-provided probe component (a heading and one button) under the declared overlay name,
+      so an overlay can be exercised without the panel's own content. emit(eventId, payload) dispatches as if the
+      producing module emitted it (payload defaults to fixture(payload_schema)) and bypasses the producer's declared list
+      check only for the origin tag 'hook'. forceState makes the development transport answer the view's data operation
+      with - loading: a promise that never settles; empty: ok with [] for list outputs or the fixture with every nullable
+      field null and every list empty otherwise; error: err internal; unavailable: err unavailable with retry_after_s 30;
+      ready: ok with fixture(output_schema); null clears the override. viewStates reports the status each mounted View of
+      the module last rendered. leaks counts registrations still alive for a module whose instances are all unmounted.
+      slotRects gives each mounted panel slot element's bounding rectangle and its scrollWidth/scrollHeight. consoleErrors
+      returns messages of console.error calls the hook has observed since load (it wraps console.error without
+      suppressing it). fixture builds a deterministic value from a schema - strings "Sample <property name>", Decimal
+      "12.50", Money {"amount":"1250.00","currency":"USD"}, Id "id-1", Date "2026-10-03", DateTime
+      "2026-10-03T09:30:00Z", integers 3, booleans true, enums their first value, lists of 3 items, maps with keys
+      "a", "b", "c", one_of its first alternative with its kind, nullable values non-null.
+
+slices:
+  - id: slice_a
+    name: contract runtime, compiler and their commands
+    owns_paths:
+      - lib/dovetail.rb
+      - lib/dovetail/version.rb
+      - lib/dovetail/errors.rb
+      - lib/dovetail/canonical_json.rb
+      - lib/dovetail/cli.rb
+      - exe/dovetail
+      - dovetail.gemspec
+      - Gemfile
+      - .gitignore
+      - lib/dovetail/contract.rb
+      - lib/dovetail/contract/**
+      - lib/dovetail/compiler.rb
+      - lib/dovetail/compiler/**
+      - lib/dovetail/cli/compile.rb
+      - lib/dovetail/cli/contract.rb
+      - lib/dovetail/cli/brief.rb
+      - lib/dovetail/cli/sign.rb
+    depends_on: [foundation, "slice_b's Dovetail::Signing for the sign command (code against the signing api)"]
+    deliverable: >
+      The foundation files; the DSL loader and immutable model with validation C001 to C007; the compiler writing
+      schema, types, client, shape, brief, registry entries and model JSON; and the compile, contract, brief and sign
+      commands.
+    detail:
+      loading: >
+        Dovetail::Contract.load_file(path) reads the file and parses it with Ripper.sexp. If the parse fails, raise
+        D-CON-001 with the file and the Ripper error position. Walk the tree and accept only - method calls whose name is a
+        DSL statement (contract, type, field, operation, emits, consumes, panel, depends_on, slot, view, capability,
+        route, prop, tokens, storage_key, shortcut, overlay, list, map, one_of, ref) or require with the single string
+        argument "dovetail"; the constant Dovetail as the receiver of contract only; the scalar type constants (String
+        Integer Decimal Boolean Date DateTime Id Money Percent Url Email); symbols, strings without interpolation,
+        integers, floats, true, false, nil, arrays, %w and %i literals, hashes with symbol or label keys, and do/brace
+        blocks with no parameters. Everything else (def, class, module, backticks, %x, :: constant paths, other
+        constants, variables, assignments, string interpolation, method calls with receivers other than Dovetail,
+        operators) is D-CON-001 naming the construct and its line. Then evaluate the source with instance_eval on a
+        fresh BasicObject subclass instance whose const_missing returns type markers for the scalar names and a DSL root
+        for Dovetail and raises D-CON-001 for anything else; require "dovetail" is a no-op there. A file must declare
+        exactly one contract (else D-CON-001). The model is frozen deeply.
+      dsl_semantics: >
+        Follow the spec's contract_dsl statements and contract_dsl_field_options exactly, plus optional description:
+        on contract, operation, emits, view, overlay and slot. field options default required true, nullable false; a
+        default implies required false. operation input and output and emits payload accept a type name symbol, a
+        composite (list(:x), map(String, :x), one_of(:a, :b), ref(:m, :t)), a scalar constant, or a Hash of name =>
+        Type (an inline type; each value may itself be a composite or scalar). timeout_ms defaults to 10000, idempotent
+        to false, errors to []. consumes :module, :event. depends_on :module, version: "<op> <n>" with op one of >=, >,
+        =, <=, <, ~> (default ">= 1"). panel statements as the spec forms; overlay dismissible defaults true and blocking
+        defaults true for modal and drawer, false for popover, menu and toast; view states defaults to the five required
+        states; capability accepts :overlay, :navigation, :storage, :keyboard, :lifecycle (options ignored); tokens
+        :default or an Array of family symbols (color space radius type weight shadow motion); storage_key type: a type
+        name symbol or scalar; shortcut keys String with action: and scope: (:panel default). Names must be lower snake
+        case symbols (else D-CON-001).
+      validation: >
+        C001 every referenced type exists (named in this contract, or ref to a module in the set; a ref to a module not in
+        the set is a warning). C002 operation, event and type names unique within the contract and types not shadowing
+        scalars. C003 each consumed event exists in the named module's emits and that module's version satisfies this
+        contract's depends_on requirement for it when one is declared (warning when the module is not in the set). C004
+        each view's data operation exists and its states include all five required states. C005 as
+        implementation_decisions routes (namespace /<id with _ as ->, route equals it or starts with it + /; no two
+        routes of the contract can match the same path, where two patterns overlap when they have the same number of
+        segments and each segment pair is equal or at least one is a :param). C006 storage_key needs capability :storage,
+        shortcut needs :keyboard, overlay needs :overlay, and any route other than the namespace itself needs
+        :navigation. C007 only in diff (and in fuse via slice D). Findings carry rule, severity (error or warning),
+        module id and a plain message naming the item.
+      versioning_diff: >
+        Dovetail::Contract.diff compares two model hashes and classifies with the spec's versioning lists - breaking:
+        removing a type field, an operation, an emitted event, a slot or a route; making an optional field required;
+        narrowing an enum (removing a value) or a range (raising min, lowering max, adding min or max); changing a
+        field's type, an operation's input or output type, or an event payload type. compatible: adding an optional field,
+        an operation, an event or a route; widening an enum or range; adding a view state beyond the five. Anything else
+        (descriptions, timeouts, idempotence, capabilities, overlays, storage keys, shortcuts) is compatible.
+      compile_outputs: >
+        Dovetail::Compiler.compile(models, out:) validates the set first (errors -> D-CON-002 with details[:findings]),
+        then for each model writes schema/<m>.schema.json, types/<m>.d.ts, client/<m>.ts, shape/<m>.shape.json (only when
+        the contract has a panel), shape/<m>.brief.md (panel only), registry/<m>.json (panel only), model/<m>.model.json,
+        all byte-identical for the same input (sorted keys, no timestamps, "\n" line endings, a final newline). Directories
+        are created as needed; files outside these names are never touched.
+      brief: >
+        Dovetail::Compiler::Brief.render(model) writes Markdown with exactly these second-level headings in order - "What
+        your panel is for", "Where it renders", "What data it shows", "What it may do across its edge", "What it may not
+        do", "Events it sends and receives", "Tokens it may style with", "What is completely free" - under a first-level
+        heading "<Title> panel brief". Tone per the spec's brief section (plain, second person, a first-year business
+        student can follow it), under 900 words for the worked example, no em-dashes. "What it may do" lists each declared
+        capability with its primitive and a one-line compliant example taken from the rule catalogue's example_compliant
+        for that seam (read lib/dovetail/shape/rules.yml when it exists; otherwise use the spec's rule examples, which
+        are the same text). "What it may not do" lists each seam the panel did not declare in one line; data, events,
+        lifecycle, identity and layout are always available and never listed there. Sensitive fields get a one-line
+        warning in "What data it shows". render_shape(shape_hash) produces the same headings from the shape alone,
+        without descriptions or payload fields, and says so in one sentence at the end of "What your panel is for".
+      commands: >
+        compile - dovetail compile <contract.rb>... --out <dir>; prints one line per written file unless --quiet, then
+        "compiled N contracts"; exit 0, or 1 with the findings printed as "<file>: <rule> <message>" on validation errors,
+        or 2 for D-CON-001. contract lint <file>... - validation findings, exit 1 on any error. contract diff <old.rb>
+        <new.rb> [--format text|json] - one line per change "breaking: <description>" or "compatible: ...", then exit 1
+        with "D-CON-003 breaking change without a version increase (still v<n>)" when C007 fails, else 0. contract show
+        <file> - the model JSON (Dovetail::CanonicalJSON.pretty). brief <shape.json> - if <dir>/<m>.brief.md exists beside
+        the shape (same basename with .shape.json replaced by .brief.md) print it verbatim; else print
+        Brief.render_shape. sign <shape.json> --private-key <pem> - write the .sig file (Dovetail::Signing.signature_path)
+        and print its path; exit 2 when the shape is not dovetail.shape/v1 (D-SHP-001) or the key cannot be read.
+    acceptance:
+      - >-
+        In the scratch directory, write the spec's worked_example contract, the spec's contract_dsl example, and one
+        contract per module of grokit_panel_shapes (ten; invent operation input and output types that fit the view names;
+        use the routes in the spec as corrected), then run exe/dovetail compile on all of them with --out, on the host
+        Ruby and inside ruby:2.6.10-slim. Both exit 0.
+      - >-
+        The finance shape.json from the spec's worked_example contract parses equal to the shared_contracts shape_json
+        example.
+      - >-
+        Compiling twice produces byte-identical trees (diff -r shows nothing), on 2.6 and on 3.3, and the 2.6 and 3.3
+        outputs are byte-identical to each other.
+      - Compiling the ten Grokit contracts takes under 2 seconds inside ruby:2.6.10-slim (time the command).
+      - >-
+        Crafted contracts in the scratch directory produce each of C001 to C006 once, with exit 1, and forbidden
+        contracts (File.read, system, a backtick, ::File, def, a string with interpolation, two contracts in one file)
+        each give D-CON-001 with exit 2.
+      - >-
+        contract diff shows a removed field as breaking and exits 1 with D-CON-003 when the version is unchanged, and 0
+        when the version increased; an added optional field alone exits 0.
+      - >-
+        After slice C's runtime/src exists, run TypeScript (npx -p typescript@5 tsc --noEmit) on the generated types and
+        clients with a tsconfig whose paths map '@dovetail/runtime' to runtime/src/index.ts, and report the result; if
+        runtime/src does not exist yet when you finish, say so.
+      - The finance brief is under 900 words and contains no em-dash or en-dash.
+
+  - id: slice_b
+    name: shape checker, token vocabulary, signing and their commands
+    owns_paths:
+      - lib/dovetail/shape.rb
+      - lib/dovetail/shape/**
+      - lib/dovetail/tokens.rb
+      - lib/dovetail/tokens/**
+      - lib/dovetail/signing.rb
+      - lib/dovetail/cli/check.rb
+      - lib/dovetail/cli/rules.rb
+    depends_on: [foundation, "slice_d's Dovetail::Config for dovetail.yml lookup (code against the config api; fall back to flags and env when it is not loadable)"]
+    deliverable: >
+      The pure-Ruby shape checker (tokenizer, Svelte-subset parser, JavaScript-subset scanner with alias tracking, CSS
+      parser, class grammar, every rule in the catalogue), lib/dovetail/tokens/vocabulary.yml written verbatim from
+      shared_contracts.token_vocabulary.content, lib/dovetail/shape/rules.yml (the rule catalogue as data), Signing, and
+      the check and rules commands.
+    detail:
+      rules_file: >
+        lib/dovetail/shape/rules.yml holds every rule in the spec's shape_checker.rules (as repaired in
+        specs/dovetail.spec.yml) with id, seam, severity, finds, fix, example_violation, example_compliant and
+        why_it_breaks_fusion copied verbatim, plus relaxed_severity for S-LAY-003, S-HTML-002 and S-CSS-005 (warning) and
+        their severity set to error, per implementation_decisions rule profiles. Rule ids are stable.
+      pipeline: >
+        Follow the spec's shape_checker.pipeline, parser, parser_design and the rules. Inputs are every .svelte, .ts and
+        .js file under the panel directory (skip node_modules). A .ts or .js file goes through the JavaScript-subset
+        scanner only. A .svelte file is tokenised per parser_design.svelte_tokenizer (states markup, tag, attribute_value,
+        expression, block, script, style, comment) with 1-based line and column on every token, then built into the
+        markup_tree node types, with script blocks handed to the scanner and style blocks to the CSS parser with their
+        line offsets so reported positions are positions in the original file. Unknown constructs give S-PARSE-001
+        (warning) and the file is also scanned as raw text for the forbidden identifiers of S-NAV-001, S-STO-001,
+        S-EVT-003, S-DAT-001, S-LIF-001, S-KEY-001 and S-DYN-001, so nothing unknown is treated as safe.
+      javascript_scanner: >
+        Tokens per parser_design.javascript_scanner. Recognise imports (default, named, namespace, type-only) and their
+        sources; const and let bindings of one identifier or of an object destructuring pattern; member chains with . and
+        ?.; calls; new; assignments to member chains. Globals are window, document, globalThis, self, navigator, history,
+        location, localStorage, sessionStorage, indexedDB and the bare function names setInterval, setTimeout,
+        requestAnimationFrame, fetch, XMLHttpRequest, EventSource, WebSocket, postMessage, eval, Function. An alias is a
+        binding whose initialiser is a member chain rooted at a global (const w = window; const s = window.localStorage;
+        const { localStorage } = window) and stays an alias for the rest of the scope (the brace depth where it was
+        declared). A local binding that shadows a global name (a parameter or const named location) stops that name
+        being a global inside its scope.
+      rule_matching: >
+        S-NAV-001 any read or write of window.location, document.location or bare location (unless shadowed), and calls
+        to history.pushState, history.replaceState, history.back, history.forward, history.go through any root.
+        S-STO-001 localStorage, sessionStorage, indexedDB through any root or alias, and document.cookie. S-EVT-003
+        postMessage called on window, self, globalThis or bare, and dispatchEvent called on window, document, self or
+        globalThis or their aliases. S-KEY-001 addEventListener with a first argument 'keydown', 'keyup' or 'keypress' on
+        window, document, document.body or their aliases; assignments to onkeydown, onkeyup, onkeypress on them; and
+        onkeydown, onkeyup, onkeypress attributes or on:keydown, on:keyup, on:keypress directives on svelte:window,
+        svelte:document or svelte:body. S-DAT-001 calls or new of fetch, XMLHttpRequest, EventSource, WebSocket bare or
+        through a root. S-LIF-001 calls of setInterval, setTimeout, requestAnimationFrame bare or through a root.
+        S-OVL-002 any .showModal( call; document.body.style (any property) writes; document.body.classList method calls;
+        document.documentElement.style.overflow writes. S-OVL-001 the class fixed (with any variants), position: fixed in
+        a style attribute, a style:position directive with the literal "fixed", or position: fixed in a style block.
+        S-OVL-003 openOverlay('<name>' or <Overlay name="<name>"> whose name is not in shape overlays. S-NAV-002
+        navigate('<route>' or link('<route>' whose route is not one of the shape's routes, and <a href="/..."> with a
+        literal absolute path that matches none of the shape's route patterns (external URLs and # anchors are fine).
+        S-EVT-001 an import whose relative source resolves outside the panel directory. S-EVT-002 emit('<event>' not in
+        shape events.emits and on('<event>' not in events.consumes. S-DAT-002 a call <binding>.<op>( where <binding> is
+        imported from '$generated/client/<own module>' and "<module>.<op>" is not in shape operations. S-KEY and the rest
+        of the markup rules as the catalogue says. S-ID-001 static literal values of id, for, aria-labelledby,
+        aria-describedby, aria-controls, aria-owns, aria-activedescendant, list, form and headers attributes. S-LAY-001
+        the refused classes in vocabulary.yml and vw, vh, dvh, svh, lvh, vmin, vmax units in style attributes and style
+        blocks. S-LAY-002 z-* classes and z-index declarations. S-LAY-003 negative margin classes or declarations on the
+        root elements (top-level markup elements) of src/Panel.svelte. S-CSS-001 a class the grammar refuses, with the
+        suggestion from vocabulary.yml suggestions in the fix ("use text-text-dim"). S-CSS-002 per vocabulary refused.
+        S-CSS-003 literal colours (hex, rgb, rgba, hsl, hsla, hwb, lab, lch, oklab, oklch, color(), and named colours
+        other than transparent, currentColor, inherit), literal lengths in px, rem, em, pt, pc, cm, mm, in, ex, ch other
+        than 0 (and 1px or 2px in border, border-*, outline, outline-width, border-width properties), literal
+        box-shadow or text-shadow other than none, and literal time values in transition, transition-duration,
+        animation, animation-duration - in style blocks, style attributes and style: directives; percentages, fr, cq*
+        units, unitless numbers and var() references to vocabulary css vars or host vars are fine, and a var() whose
+        name is not a vocabulary or host var is S-CSS-003. S-CSS-004 selectors containing :global, :root, html or body.
+        S-CSS-005 a class attribute expression that is not literal - literal means a string, a template literal without
+        ${}, a ternary or logical expression whose branches are literals, an array of literals, or cx(...) with literal
+        arguments; class: directives are always literal. S-HTML-001 <main>, <nav>, and role="banner|navigation|
+        contentinfo|main". S-HTML-002 per implementation_decisions heading levels. S-HTML-003 <input>, <select>,
+        <textarea> without aria-label, aria-labelledby, a wrapping <label>, a <label for> pointing at an expression id,
+        title, or a spread; and TextInput, NumberInput, Select outside a <Field> without a label or aria-label prop.
+        S-HTML-004 any {@html}. S-I18N-001 t('<key>' whose key does not start with "<module>.". S-STATE-001 per the spec's
+        state_detection - for each shape view, a <View name="<view>"> must exist in some component, and within it either
+        a <States> whose attributes or {#snippet <state>()} children cover every required state, or {#if}/{:else if}
+        conditions that between them compare against every required state's string literal; missing view or missing
+        states are one finding each. S-DYN-001 computed member access on window, globalThis, self, document or their
+        aliases, eval(...), Function(...), new Function(...). S-DEP-001 an import source that is not '@dovetail/runtime'
+        or '@dovetail/runtime/<sub>', 'svelte' or 'svelte/<sub>', '$generated/types/<any module>',
+        '$generated/client/<own module>', or a relative path inside the panel directory. Non-literal names per
+        implementation_decisions non-literal names.
+      class_grammar: >
+        Dovetail::Tokens::ClassGrammar.classify implements the spec's class_grammar over vocabulary.yml - a class is
+        [variant:]*[-]utility[/opacity]; variants are the listed pseudo, breakpoints, containers, aria-<name> for the
+        listed aria names, and data-<name> matching data_pattern; the utility must be generated from utilities (color
+        prefix + color token or keyword; space prefix + space token, extra value or its keyword; radius prefix +
+        radius token; text-<type token>; font-<weight token>; shadow-<shadow token>; duration-<motion token>; numbered and
+        valued families; static). A leading - is allowed only for negatable space prefixes. An /opacity suffix is allowed
+        only on color utilities with a listed value. Refused classes route to their rule ids before S-CSS-001.
+      output_and_exit: >
+        Exactly the spec's shape_checker.output (text and json). Text lines are
+        "<file>:<line>:<column> <rule-id> <message> -> <fix>", then a summary line "dovetail check: N errors, M warnings".
+        JSON is the spec form with panel (the panel directory's basename), shape_version (contract_version), findings sorted
+        by file, line, column, rule, and summary. Exit 0 no errors, 1 errors, 2 could not run (D-SHP-001 missing or wrong
+        schema, D-SHP-002 bad signature, D-SHP-003 no key configured while a signature is required, D-CHK-001 unreadable
+        file), printing "<code> <message>" on stderr for exit 2.
+      command_forms: >
+        dovetail check <panel_dir> --shape <file> [--require-signed] [--public-key <pem>]... [--format text|json]
+        [--profile strict|relaxed] [--changed <file>], and the implementation_decisions check command line form (a
+        positional *.json is the shape; the panel dir defaults to the current directory). --profile defaults to the
+        shape's rules_profile, then dovetail.yml's rules_profile, then strict. Key lookup order per implementation_decisions.
+        dovetail rules prints every rule as "<id>  <seam>  <severity>  <finds>"; dovetail rules <id> prints that rule's
+        fields as labelled lines; an unknown id exits 1.
+      performance: Checking a panel of 40 components (about 120 lines each) takes under 1.5 seconds on Ruby 2.6.
+    acceptance:
+      - >-
+        In the scratch directory, build a violations panel (src/Panel.svelte plus a few components and a .ts file)
+        that commits every rule in rules.yml exactly once at a line you know, and a compliant panel written the way the
+        spec's worked_example panel_excerpt is (with its FindingDetail component and a finance shape.json you write from
+        shared_contracts.shape_json.example). Run exe/dovetail check on both with --format json and text, on the host Ruby
+        and inside ruby:2.6.10-slim. The violations panel reports every rule id once at the expected file, line and column,
+        exits 1; the compliant panel reports no errors and exits 0; both Rubies give identical JSON.
+      - >-
+        The alias cases are caught - const w = window; w.addEventListener('keydown', f); const { localStorage } = window;
+        localStorage.setItem('a', 'b'); globalThis['local' + 'Storage'] is S-DYN-001.
+      - An unknown construct gives S-PARSE-001 and a forbidden identifier inside it is still reported.
+      - >-
+        Generate an RSA-4096 key pair in the scratch directory; sign the finance shape with Dovetail::Signing; check with
+        --require-signed --public-key passes; a changed byte in the shape gives D-SHP-002 exit 2; no key gives D-SHP-003
+        exit 2; DOVETAIL_PUBLIC_KEYS works; the Reach form cd <panel>; exe/dovetail check --require-signed <abs shape.json>
+        works.
+      - 40 generated components check in under 1.5 seconds inside ruby:2.6.10-slim.
+      - >-
+        ClassGrammar accepts bg-surface-2, text-text-dim, p-4, rounded-lg, hover:bg-surface-3, @md:grid-cols-2,
+        -mx-2, bg-accent/50, data-active:bg-surface-2, aria-selected:text-text; refuses text-gray-500 (S-CSS-001 suggesting
+        text-text-dim), bg-[#123456] (S-CSS-002), fixed (S-OVL-001), z-10 (S-LAY-002), h-screen and min-h-dvh (S-LAY-001),
+        p-7 (S-CSS-001 suggesting p-6).
+
+  - id: slice_c
+    name: runtime package (@dovetail/runtime)
+    owns_paths:
+      - runtime/**
+    excludes: [runtime/tools/**]
+    depends_on: ["the shared_contracts formats; nothing else"]
+    deliverable: >
+      A Svelte 5 plus TypeScript package in runtime/ named @dovetail/runtime, version 0.1.0, private true, license
+      AGPL-3.0-only, built with svelte-package into runtime/dist, exporting exactly shared_contracts.runtime_public_api,
+      implementing every seam primitive, the shell host, slots, panel host with error boundaries and failure budget,
+      the overlay host, the router, the event bus, storage, keyboard and lifecycle registries, identity, i18n and
+      formatters, both transports, the JSON Schema validator for development, the development hooks and the development
+      toolbar, and all 18 components, styled per visual_design.
+    detail:
+      package: >
+        runtime/package.json - "type": "module"; "svelte": "./dist/index.js"; "types": "./dist/index.d.ts"; exports for
+        ".", "./internal", "./components", "./icons" each with "types", "svelte" and "default" pointing into dist; files
+        ["dist"]; scripts build (svelte-package -i src -o dist), check (svelte-check --tsconfig ./tsconfig.json
+        --fail-on-warnings), sync (svelte-kit is not used; no sync). peerDependencies svelte ^5.57.0; dependencies
+        phosphor-svelte (latest that supports Svelte 5); devDependencies svelte, typescript, svelte-check,
+        @sveltejs/package, @sveltejs/vite-plugin-svelte, vite, tailwindcss, @tailwindcss/vite, axe-core (the last four
+        exist for slice D's tools, which run from runtime/node_modules). Run npm install FIRST, before writing source,
+        so runtime/node_modules and package-lock.json exist early for slice D. Commit-ready package-lock.json.
+      structure: >
+        runtime/src/index.ts, internal.ts, components.ts, icons.ts, types.ts; runtime/src/shell/ (DovetailShell.svelte,
+        Slot.svelte, PanelHost.svelte, FallbackCard.svelte, NotBuiltCard.svelte, placement.ts, state.svelte.ts - the
+        runtime singleton holding registry, transport, locale, theme and the panel instance table); runtime/src/seams/
+        overlay, navigation, storage, events, data, keyboard, lifecycle, identity, layout (one directory each);
+        runtime/src/transport/ (http.ts, development.ts, fixtures.ts, sse.ts); runtime/src/validate/jsonschema.ts;
+        runtime/src/i18n/ (t.ts, icu.ts, format.ts, messages/en-US.json); runtime/src/components/ (one .svelte per
+        component, plus View.svelte, States.svelte, Overlay.svelte); runtime/src/dev/ (hooks.ts, leaks.ts,
+        DevToolbar.svelte). Use Svelte 5 runes and snippets only; no legacy stores in components; svelte/store readables
+        may be accepted as subscribe sources.
+      shell_behaviour: >
+        DovetailShell props - registry, theme (Theme), locale (default 'en-US'), transport, onPanelError(module, error),
+        children (the app's layout snippet). It sets the runtime singleton, renders a root div class dt-shell with
+        data-theme=<theme.id>, data-color-scheme=<theme.color_scheme> and color-scheme, injects one <style
+        data-dovetail-theme> into document.head holding .dt-shell[data-theme="<id>"] { --<key>: <value>; ... } for the
+        active theme plus @media (prefers-reduced-motion: reduce) { .dt-shell { --motion-fast: 0ms; --motion-base: 0ms;
+        --motion-slow: 0ms } } and replaces it when theme changes, renders children, then the overlay host, the toast
+        region and (development only) the DevToolbar. It installs the router (history API, popstate, same-origin anchor
+        click interception for hrefs matching a registered route; "/" is replaced by the home module's first route), the
+        single document keydown listener for shortcuts and Escape, the scroll-lock counter and the server event stream
+        (transport.subscribe('events') once). Slot props - name. Slot renders, per implementation_decisions placement,
+        a PanelHost for each panel slot mapped to it, inside a div with data-slot, data-dovetail-panel=<module>,
+        container-type inline-size, contain layout paint, min-width 0; heading level context from the layout slot. The
+        placement rule lives in shell/placement.ts. useNavigation() returns a reactive array of { label (t(label_key)),
+        href, active, module } from registry.layout.navigation.
+      panel_host: >
+        PanelHost creates one panel instance per (module, slot) mount - instance number per module starting at 1 - sets
+        Svelte context for the instance, and renders the panel component with props { slot: <slot name>, ...declared
+        props from the shell (none in 0.1.0, so undefined unless the app passes them through a future API) } inside
+        <svelte:boundary>. Errors from the boundary, and errors thrown by handlers the runtime invokes (on, shortcut,
+        every, after, frame, subscribe, overlay callbacks), go to the instance's fail(error), which unmounts the subtree,
+        releases the instance's overlays, handlers, shortcuts and lifecycle work, shows FallbackCard, calls onPanelError,
+        and records the failure. Reload panel remounts. Three failures within five minutes park the panel in its
+        fallback until the page reloads (FallbackCard without the button). crash(module) makes the next render of that
+        module's instances throw inside the boundary.
+      seams: >
+        Implement each primitive exactly as the spec's runtime_api and seams describe, bound to the calling module
+        (createPanelApi) or resolved from context (main entry). Undeclared overlay, route, event, storage key or shortcut
+        - in development throw an Error whose message starts with the D-RUN code (D-RUN-001 OverlayNotDeclared, D-RUN-002
+        RouteNotDeclared, D-RUN-003 EventNotDeclared) and record a runtime violation; in production refuse with one
+        console.warn and no effect. Payload validation (D-RUN-004 PayloadInvalid) in development for emit, on delivery
+        from the server, store set and operation input and output. store keys dovetail:<module>:v<contract_version>:<key>
+        in localStorage with an envelope {"v": value, "e": expiry epoch ms or null}; quota 256 KB per module counted
+        as the UTF-16 length times 2 of all that module's stored strings; StorageQuotaExceeded (D-RUN-005) thrown and
+        the old value kept. Event delivery synchronous in subscription order only to modules that consume the event; a
+        handler slower than 50 ms logs console.warn in development. Shortcuts per keys_grammar (mod is Meta on macOS,
+        Control elsewhere), inactive in text fields unless the combination includes mod, inactive while another module's
+        blocking overlay is open; scope view is active only while the module owns the current route. every pauses while
+        document.hidden. useId returns dt-<module>-<instance>-<name>. Formatting uses Intl with the shell locale;
+        formatMoney and formatNumber pass Decimal strings to Intl.NumberFormat.format as strings; formatPercent("12.5") is
+        "12.5%". t supports {name} substitution and ICU plural (one, other, =N, #) and select; missing keys fall back to
+        en-US, then to the key itself, logging one console.warn per key in development.
+      overlay_host: >
+        One host element inside .dt-shell, z-index base 1000 (toasts 1100, tooltips and Select listboxes 1050, dev
+        toolbar 1200; these constants live in one file). openOverlay mounts the component with mount() into a layer
+        per kind with the kind's behaviour - blocking kinds get a scrim, a focus trap (Tab cycles inside; initial focus
+        on the first focusable element or the dialog itself), aria-modal and role dialog labelled by the first heading
+        inside (given an id); focus returns to the element that was focused before opening; scroll lock is a counter that
+        sets overflow hidden and scrollbar-gutter stable on document.documentElement while above zero; Escape closes the
+        top dismissible overlay only; a pointerdown on the scrim (blocking) or outside (popover, menu) closes the top
+        dismissible overlay. Popover and menu anchor to the anchor element (Overlay anchor prop, or the element focused
+        when openOverlay was called), below it and flipping above when there is no room, offset by --space-1. menu
+        gives arrow-key roving focus among [role=menuitem] and role menu. An overlay's component receives its props plus
+        close(result?). Overlays of a module close when its instance unmounts or fails. toast(message, {tone,
+        duration_ms}) queues into one shared region, at most three visible, auto-dismiss after duration_ms (default 5000,
+        danger 8000) paused while hovered or focused, polite live region (danger assertive).
+      transports: >
+        createHttpTransport({ baseUrl = '', disabled = false, disabledModules = [], fetch = globalThis.fetch,
+        maxInFlightPerModule = 6, ratePerSecond = 10, burst = 20, breaker = { failures: 5, cooldown_ms: 30000 },
+        streamPath = '/api/v1/events' }) implements the spec's wire_protocol - POST <baseUrl>/api/v1/modules/<m>/<op>,
+        headers Content-Type application/json, X-Dovetail-Contract <m>@<version>, X-Request-Id crypto.randomUUID();
+        AbortController timeout at timeout_ms (a timeout is unavailable with message "timed out"); retries only when
+        idempotent, at most 2, delay = random(0, min(2000, 250 * 2^attempt)) ms, and a 429 or 503 with Retry-After waits
+        that many seconds instead when it fits within the remaining timeout, otherwise returns rate_limited or
+        unavailable with retry_after_s; 4xx other than 408, 425 and 429 are never retried; response bodies map per
+        wire_protocol.response (first error of errors); a response contract_version different from the expected one is
+        contract_version_mismatch with versions. Per module - a token bucket (ratePerSecond, burst) where a call waits
+        for a token up to its timeout, else rate_limited; at most maxInFlightPerModule in flight, the rest queued FIFO;
+        a circuit that opens after breaker.failures consecutive unavailable, internal or timeout results and answers
+        unavailable with retry_after_s immediately until cooldown_ms passes, then lets one call through (half-open).
+        disabled or a disabled module answers unavailable without a request. stats() returns per module counts of
+        requests, ok, errors by status class, 429s, retries, in_flight, queued, breaker state and p50/p95/p99 latency
+        over the last 200 calls; the development hooks expose it. The event stream is one shared EventSource with
+        reconnect after close on error using random(0, min(30000, 1000 * 2^n)) ms. createDevelopmentTransport({
+        latency_ms = 120, responses = {} }) answers from fixtures of each operation's output schema (fixtures.ts, the
+        deterministic generator the development hooks use), honours forceState overrides and per-operation responses,
+        and never touches the network.
+      jsonschema: >
+        A small validator for the subset the compiler emits (type, properties, required, additionalProperties, items,
+        enum, const, pattern, format date and date-time and uri and email, minimum, maximum, minLength, maxLength,
+        minItems, maxItems, anyOf, oneOf, $ref within a document and across documents by "<module>.schema.json#...") with
+        errors as {path, message}. Used only when registry.development is true.
+      dev_toolbar: >
+        Development only. A collapsed control at the bottom left (fixed, bottom and left var(--space-4)) - a secondary
+        small Button reading "Dovetail" with a Badge count of runtime violations plus static findings (danger tone when
+        above zero). Expanded, a Card-like panel 360 px wide (calc(var(--space-1) * 90)), max-height 60%, overflow auto,
+        listing - Panels (each module title, a ghost small Button "Crash" in danger text, and per view a Select of the
+        five states plus "Live" that calls forceState); Findings (the static checker findings pushed by the dev server
+        through import.meta.hot?.on('dovetail:findings', payload) where payload is the spec's check JSON per panel,
+        shown as file:line rule message); Runtime (runtime violations). All built from the runtime's own components.
+      visual_design:
+        design_read: >
+          Reading this as: an embedded component kit and overlay host for an operator product used by small-business
+          owners and built by student teams, with a quiet, precise, tool-like language, leaning toward native Svelte
+          components with scoped CSS on Dovetail's design tokens (Dovetail is the design system here, so no outside
+          design-system package), themed by the three canonical rStack themes.
+        dials: >
+          DESIGN_VARIANCE 3 (components must compose predictably inside any panel), MOTION_INTENSITY 3 (motion only for
+          feedback and state change - overlay enter and exit, toast arrival, switch thumb, press, skeleton pulse),
+          VISUAL_DENSITY 5 (daily app; 32 px controls, 36 px table rows).
+        rules: >
+          Style every component with a scoped <style> block using var(--token) only - no literal colours, no Tailwind
+          classes, no px lengths except 0, 1px and 2px for borders and focus outlines; sizes are calc(var(--space-1) * n).
+          One accent, used only for the primary button fill, focus rings, the active tab indicator, checked checkbox and
+          switch, the selected option check and the Select active option edge. Shape lock - controls (Button,
+          IconButton, inputs, Select trigger and options) var(--corner-md); Card, overlays, fallback and not-built cards
+          var(--corner-lg); Badge and Switch track var(--corner-full); Tooltip, Checkbox box and Skeleton bars
+          var(--corner-sm). Focus - every interactive element shows outline 2px solid var(--accent) with outline-offset
+          2px on :focus-visible only (inputs use border-color var(--accent) plus box-shadow 0 0 0 3px
+          var(--accent-soft) instead). Type - var(--family-sans) everywhere; numbers in Stat, Table numeric columns and
+          NumberInput use font-variant-numeric tabular-nums; var(--family-display) is never used by the runtime. Motion
+          - transitions use var(--motion-fast|base) with var(--motion-ease) on transform, opacity, background-color,
+          border-color and color only; every animation stops under prefers-reduced-motion (the motion tokens already
+          become 0 ms there; the skeleton pulse and button loading bar are also disabled by media query). Icons -
+          phosphor-svelte only, regular weight, 16 px unless stated; never hand-drawn SVG. Copy - plain, sentence
+          case, no em-dashes or en-dashes, all runtime strings through t() with keys dovetail.* in
+          i18n/messages/en-US.json. No eyebrow labels, no decorative dots, no shadows on cards (dark themes lean on
+          borders), no gradients.
+        components:
+          Button: >
+            inline-flex, center, gap var(--space-2), height calc(var(--space-1) * 8) md / calc(var(--space-1) * 7) sm,
+            padding-inline var(--space-3) md / var(--space-2) sm, font var(--weight-medium) var(--type-sm) /
+            var(--type-sm-leading), radius var(--corner-md), border 1px solid transparent, white-space nowrap.
+            primary - background var(--accent), color var(--accent-contrast), hover var(--accent-hover). secondary -
+            background var(--surface-2), color var(--text), border-color var(--border-strong), hover background
+            var(--surface-3). ghost - transparent, color var(--text-dim), hover background var(--surface-2) and color
+            var(--text). danger - background var(--danger), color var(--danger-contrast), hover background
+            color-mix(in srgb, var(--danger) 88%, var(--text)). :active translateY(1px). Disabled uses aria-disabled
+            (stays focusable so its reason tooltip is reachable) - background var(--surface-2), color var(--text-faint),
+            border-color var(--border), cursor not-allowed, clicks ignored; reason shows through Tooltip and
+            aria-describedby. loading - aria-busy true, label opacity 0.72, clicks ignored, and a 2px bar in
+            currentColor along the inside bottom edge, 40% wide, sliding across over 1.1 s (static at full width and
+            opacity 0.4 under reduced motion).
+          IconButton: >
+            Square calc(var(--space-1) * 8), secondary or ghost styling as Button, icon 16 px centred, aria-label from
+            label, and a Tooltip showing label on hover and focus.
+          Field: >
+            Column with gap var(--space-1_5). Label var(--type-sm) var(--weight-medium) var(--text); when required a
+            following span "Required" (t dovetail.field.required) in var(--type-xs) var(--text-faint) with margin-left
+            var(--space-2). Hint var(--type-xs) var(--text-dim) below the control; error below it in var(--type-xs)
+            var(--danger) with a WarningCircle icon (12 px). Provides context so the contained control gets id,
+            aria-describedby (hint and error ids), aria-invalid and aria-required; ids come from the identity primitive.
+          TextInput: >
+            Height calc(var(--space-1) * 8), padding-inline var(--space-3), background var(--surface), border 1px solid
+            var(--border-strong), radius var(--corner-md), color var(--text), var(--type-sm), placeholder var(--text-faint),
+            hover border-color var(--text-faint), focus border-color var(--accent) with the input focus ring, aria-invalid
+            border-color var(--danger) and ring color-mix(in srgb, var(--danger) 25%, transparent), disabled background
+            var(--surface-2) and color var(--text-faint).
+          NumberInput: >
+            TextInput styling, text-align right, tabular-nums, inputmode decimal; accepts the locale's group and decimal
+            separators, and on blur writes a Decimal string (dot decimal, no grouping) into value, or keeps the text and
+            sets aria-invalid when it does not parse; min, max and step are Decimal strings.
+          Select: >
+            A custom collapsible listbox (WAI-ARIA select-only combobox pattern), never a native select. Trigger styled
+            like TextInput with the selected label and a CaretDown icon in var(--text-dim) at the right. The listbox opens
+            in the overlay host at the trigger's width - background var(--surface-3), border 1px solid
+            var(--border-strong), radius var(--corner-md), shadow var(--elevation-md), padding var(--space-1), max-height
+            calc(var(--space-1) * 70) with overflow auto. Options height calc(var(--space-1) * 8), padding-inline
+            var(--space-2), radius var(--corner-sm), var(--type-sm); the active option background var(--surface-2); the
+            selected option shows a Check icon in var(--accent) at the right. Keys - Enter, Space, ArrowDown and ArrowUp
+            open; arrows move; Home and End; type-ahead; Enter or Space selects; Escape closes; Tab selects nothing and
+            moves on.
+          Checkbox: >
+            A visually hidden native checkbox for semantics plus a drawn box calc(var(--space-1) * 4) square, radius
+            var(--corner-sm), border 1px solid var(--border-strong), background var(--surface); checked - background and
+            border var(--accent) with a bold Check icon (12 px) in var(--accent-contrast); focus ring on the box;
+            label var(--type-sm) var(--text) with gap var(--space-2).
+          Switch: >
+            button role switch with aria-checked. Track calc(var(--space-1) * 8) by calc(var(--space-1) * 4.5), radius
+            var(--corner-full); off background var(--surface-3) and border 1px solid var(--border-strong); on background
+            and border var(--accent). Thumb calc(var(--space-1) * 3) circle, var(--text-dim) off and
+            var(--accent-contrast) on, moving calc(var(--space-1) * 3.5) with transform over var(--motion-fast). Label
+            var(--type-sm) beside it with gap var(--space-2).
+          Tabs: >
+            tablist with display flex, gap var(--space-4), border-bottom 1px solid var(--border). Each tab a button height
+            calc(var(--space-1) * 9), no horizontal padding, var(--type-sm) var(--weight-medium), color var(--text-dim),
+            hover var(--text); the selected tab color var(--text) with a 2px var(--accent) bar on its bottom edge
+            overlapping the tablist border. Roving tabindex; ArrowLeft and ArrowRight move and activate; Home and End.
+          Table: >
+            A scroll wrapper (overflow auto) around a table (width 100%, border-collapse separate, border-spacing 0).
+            Header cells sticky top 0, background var(--surface), var(--type-xs) var(--weight-medium) var(--text-dim),
+            sentence case, padding var(--space-2) var(--space-3), border-bottom 1px solid var(--border-strong); sortable
+            columns render the header as a full-cell button with CaretUp or CaretDown (12 px; var(--text-faint) inactive,
+            var(--text) active) and aria-sort on the th. Body cells padding var(--space-2) var(--space-3), var(--type-sm)
+            var(--text), border-bottom 1px solid var(--border) except the last row. Columns with align right or format
+            number, money or percent use tabular-nums and right alignment; format uses the runtime formatters. Rows hover
+            background var(--surface-2); roving focus on rows (tabindex on the active row) with ArrowUp, ArrowDown, Home,
+            End, PageUp, PageDown and a focus-visible inset outline 2px var(--accent). sort is bindable {key, direction}
+            and the table sorts rows client-side (numbers and Decimal strings numerically, others with localeCompare).
+            With no rows it renders the empty component (default EmptyState) in one full-width cell. Beyond 200 rows it
+            virtualises with a fixed row height of calc(var(--space-1) * 9), the wrapper at max-height
+            calc(var(--space-1) * 120), 8 rows of overscan and spacer rows, listening to the wrapper's scroll only.
+          Card: >
+            section with background var(--surface-2), border 1px solid var(--border), radius var(--corner-lg), padding
+            var(--space-4), no shadow. title rendered as a heading one level below the slot's heading level (h3 in a main
+            slot) in var(--type-sm) var(--weight-semibold) var(--text) with margin-bottom var(--space-3). tone accent,
+            warning or danger adds box-shadow inset 0 2px 0 var(--accent|--warning|--danger) along the top edge.
+          Badge: >
+            inline-flex, height calc(var(--space-1) * 5), padding-inline var(--space-2), radius var(--corner-full),
+            var(--type-xs) var(--weight-medium). neutral - background var(--surface-3), color var(--text-dim). success,
+            warning, danger, info - color var(--<tone>), background color-mix(in srgb, var(--<tone>) 14%, transparent),
+            border 1px solid color-mix(in srgb, var(--<tone>) 32%, transparent).
+          Stat: >
+            Column with gap var(--space-1). label var(--type-xs) var(--weight-medium) var(--text-dim); value
+            var(--type-2xl) / var(--type-2xl-leading) var(--weight-semibold) var(--text) tabular-nums; unit var(--type-sm)
+            var(--text-dim) after the value with margin-left var(--space-1); trend an icon 14 px (TrendUp in
+            var(--success), TrendDown in var(--danger), Minus in var(--text-faint)) plus visually hidden text Up, Down
+            or Flat, so meaning never depends on colour.
+          Skeleton: >
+            role status with aria-label "Loading" (t dovetail.loading); bars background var(--surface-3), radius
+            var(--corner-sm). text - lines bars of height var(--space-3) with gap var(--space-2), the last 60% wide.
+            block - one bar calc(var(--space-1) * 24) tall, radius var(--corner-md). table - five rows of three bars (40%,
+            25%, 15% wide) at calc(var(--space-1) * 9) row height with a 1px var(--border) line between rows. Pulse opacity
+            1 to 0.55 and back over 1.6 s ease-in-out, off under reduced motion.
+          EmptyState_ErrorState_UnavailableState: >
+            Left-aligned column (never centred), gap var(--space-2), padding var(--space-6) var(--space-4). Icon 20 px -
+            Tray in var(--text-faint) (empty), WarningCircle in var(--danger) (error), CloudSlash in var(--warning)
+            (unavailable). Title var(--type-sm) var(--weight-semibold) var(--text); body var(--type-sm) var(--text-dim),
+            max-width 60ch; action a secondary small Button. Defaults - EmptyState title "Nothing here yet"; ErrorState
+            title "Something went wrong", body "This view could not load. Try again in a moment.", retry Button "Try
+            again" with ArrowClockwise; UnavailableState title "{what} is unavailable right now" (what defaults to "This
+            data"), body "It will come back when the connection returns." or, with retry_after_s, "Trying again in
+            {seconds} s" counting down each second through the lifecycle primitive, then calling retry. Error and
+            unavailable containers are polite live regions.
+          Tooltip: >
+            Shown 400 ms after pointerenter or at once on focus; hidden on pointerleave, blur or Escape. Rendered in the
+            overlay host - background var(--surface-3), color var(--text), border 1px solid var(--border-strong), radius
+            var(--corner-sm), padding var(--space-1) var(--space-2), var(--type-xs), shadow var(--elevation-sm),
+            max-width calc(var(--space-1) * 60); above the trigger, flipping below when there is no room; role tooltip and
+            aria-describedby on the trigger.
+          overlays: >
+            Scrim background var(--scrim), fading over var(--motion-base). Modal - centred, width min(calc(var(--space-1)
+            * 140), calc(100% - 2 * var(--space-6))), max-height calc(100% - 2 * var(--space-10)), overflow auto,
+            background var(--surface-2), border 1px solid var(--border), radius var(--corner-lg), shadow
+            var(--elevation-lg), padding var(--space-6); enters from opacity 0 and translateY(var(--space-1)) over
+            var(--motion-base), leaves over var(--motion-fast); a ghost IconButton with the X icon and label "Close" at top
+            var(--space-3) and right var(--space-3) when dismissible. Drawer - right edge, full height, width
+            min(calc(var(--space-1) * 120), 100%), background var(--surface-2), border-left 1px solid var(--border),
+            shadow var(--elevation-lg), padding var(--space-6), overflow auto, enters from translateX(var(--space-4)) and
+            opacity 0, same close button. Popover - background var(--surface-3), border 1px solid var(--border-strong),
+            radius var(--corner-md), shadow var(--elevation-md), padding var(--space-3), max-width calc(var(--space-1) *
+            80). Menu - as popover with padding var(--space-1); items the consumer renders as [role=menuitem]. Toasts -
+            bottom var(--space-6) right var(--space-6) (var(--space-4) both sides below 640 px), column gap var(--space-2),
+            each width min(calc(var(--space-1) * 90), calc(100% - 2 * var(--space-4))), background var(--surface-3), border
+            1px solid var(--border-strong), radius var(--corner-md), shadow var(--elevation-md), padding var(--space-3)
+            var(--space-4), a tone icon 16 px (Info in var(--info), CheckCircle in var(--success), Warning in
+            var(--warning), WarningOctagon in var(--danger)), the message in var(--type-sm) var(--text), and a small ghost
+            IconButton X "Dismiss"; enters from translateY(var(--space-2)) and opacity 0.
+          FallbackCard: >
+            Inside the slot - background var(--surface-2), border 1px solid var(--border), radius var(--corner-lg),
+            padding var(--space-5), box-shadow inset 0 2px 0 var(--danger); WarningOctagon 20 px var(--danger); title
+            "{Module} stopped working" var(--type-sm) var(--weight-semibold); the error summary in var(--type-xs)
+            var(--family-mono) var(--text-dim), clamped to three lines; secondary small Button "Reload panel" with
+            ArrowClockwise; when parked, the body "It failed three times in five minutes, so it stays off until the page
+            reloads." and no button. role alert.
+          NotBuiltCard: >
+            border 1px dashed var(--border-strong), radius var(--corner-lg), transparent background, padding
+            var(--space-5); Wrench 20 px var(--text-faint); title "{View} is not built yet" (view name with _ as spaces,
+            first letter capitalised); body "This part of {Module} is still being built." var(--type-sm)
+            var(--text-dim).
+          View_States: >
+            View renders a div with data-dovetail-view=<name> and data-status=<status> (display block, min-width 0) and
+            reports its status to the instance; status not_built renders NotBuiltCard instead of its children. States
+            renders exactly one of loading, empty, error, unavailable, ready for the enclosing View's status, each given
+            as a component or a snippet of that name; components receive data (ready), error and retry (error,
+            unavailable); defaults when a state is missing - Skeleton, EmptyState, ErrorState, UnavailableState.
+      a11y: >
+        WCAG 2.2 AA; every interactive component keyboard operable with a visible focus ring; the overlay host follows the
+        WAI-ARIA dialog pattern; Select follows the select-only combobox pattern; Tabs the tabs pattern; Table exposes
+        aria-sort and keeps its header row; nothing conveys meaning by colour alone.
+      bundle_budget: The runtime adds at most 45 KB gzipped to an application that uses all of it, excluding icons the app does not import.
+    acceptance:
+      - npm install, npm run check (svelte-check with 0 errors and 0 warnings) and npm run build all succeed in runtime/.
+      - >-
+        dist/ contains index.js, internal.js, components.js, icons.js and matching .d.ts files; the package exports
+        resolve (node --input-type=module -e "import('@dovetail/runtime')" is not required; check the exports map paths
+        exist).
+      - >-
+        In the scratch directory, a throwaway Vite app (its own package.json that depends on runtime via a file: path,
+        with vite and @sveltejs/vite-plugin-svelte from runtime/node_modules is fine) mounts DovetailShell with a
+        hand-written registry of two panels (each a small Panel.svelte using View, States and the primitives through a
+        createPanelApi binding), a development transport and each of three theme objects you write from
+        ~/rstack/themes per the theme mapping in slice_d.detail.themes (copy values; this scratch copy is not the
+        template). Build it, serve dist on 127.0.0.1, and open it with /usr/bin/google-chrome --headless=new
+        --dump-dom and --screenshot for each theme. The DOM shows both panels, window.__dovetail exists in development,
+        and no console error appears (use --enable-logging=stderr --v=0 or a Chrome DevTools Protocol script).
+      - >-
+        Build that app's production bundle with all components imported and report the gzipped size of the runtime's
+        share (compare against an app that renders only a div); it is under 45 KB.
+      - >-
+        No literal colour, no Tailwind class and no px length other than 0, 1px and 2px appears in any runtime .svelte
+        style block (grep and report).
+
+  - id: slice_d
+    name: fuser, verifier, development server, templates and their commands
+    owns_paths:
+      - lib/dovetail/config.rb
+      - lib/dovetail/layout.rb
+      - lib/dovetail/fuse.rb
+      - lib/dovetail/fuse/**
+      - lib/dovetail/verify.rb
+      - lib/dovetail/verify/**
+      - lib/dovetail/dev.rb
+      - lib/dovetail/dev/**
+      - lib/dovetail/messages.rb
+      - lib/dovetail/cli/fuse.rb
+      - lib/dovetail/cli/verify.rb
+      - lib/dovetail/cli/new.rb
+      - lib/dovetail/cli/dev.rb
+      - lib/dovetail/cli/messages.rb
+      - runtime/tools/**
+      - templates/**
+      - Gemfile.lock
+    depends_on: [foundation, slice_a contract_api, slice_b checker_api and token_vocabulary, slice_c runtime package]
+    deliverable: >
+      Config and layout loading; the fuser with every spec step, collision checks, theme checks, generated registry,
+      binding modules, Tailwind entry CSS, type-check and Vite build; the Ferrum composition verifier with every spec
+      journey; the development server (Vite, and --static); messages check; the new command; the shell and panel
+      templates with the three themes.
+    detail:
+      config_and_layout: >
+        lib/dovetail/config.rb per shared_contracts.config, reading dovetail.yml with YAML.safe_load. Config also reads
+        themes (glob, default <shell>/themes/*.json). lib/dovetail/layout.rb loads layout.yml - slots [{name, size,
+        region, heading_level}], navigation [{label_key, module, route}], breakpoints (default the spec's), home - and
+        validates sizes and regions against the spec (D-FUS-002 is not used for this; a bad layout is exit 2 with a
+        plain message).
+      fuse: >
+        dovetail fuse --app <shell> --panels <dir>... [--verify] [--out <dist>] [--development]. The app root is the
+        directory of the nearest dovetail.yml at or above --app (or the current directory); flags override the config.
+        Steps in the spec's order, each recorded in the report - (1) contracts - for each panel dir, its contract is
+        <panel_dir>/../contract.rb unless the config contracts glob maps it; load all with Contract.load_file, validate
+        the set with Contract.validate (errors fail with exit 1), then C007 per contract against
+        <out>/generated/model/<m>.model.json from the previous fuse when it exists (breaking without a version increase
+        fails with D-CON-003); compile the set into <out>/generated. (2) check each panel with Dovetail::Shape.check
+        against its freshly compiled shape (no signature) and the config's rules_profile; any error fails with D-FUS-001
+        naming the panel and the findings. (3) type-check - when Node is available and config node is not false, run
+        <dovetail>/runtime/node_modules/.bin/svelte-check once per panel with a generated tsconfig in
+        <out>/typecheck/<m>/tsconfig.json whose paths map '@dovetail/runtime' to <out>/bind/<m>.ts,
+        '@dovetail/runtime/*' to the runtime's dist, '$generated/*' to <out>/generated/*; errors fail with D-FUS-001;
+        without Node record type_check skipped. (4) collisions - routes (the C005 overlap test across panels, plus / is
+        the shell's), shortcuts (same keys where both scopes are panel, or one panel and one view), storage keys (assert
+        the namespaced keys are unique), overlay names (the same name in two panels) - each D-FUS-002 naming both panels;
+        events - a consumed event missing from its producer or a producer whose version fails the consumer's
+        depends_on requirement is D-FUS-003. (5) themes - each theme JSON must contain every key of
+        Dovetail::Tokens.theme_keys, else D-TOK-001 naming the theme and the missing keys; at least one theme is required.
+        (6) generate <out>/registry.generated.ts (shared_contracts.registry_generated_ts; development false unless
+        --development or the verify build), <out>/bind/<m>.ts (shared_contracts.binding_module), and <out>/app.css per
+        tailwind_entry. (7) build - node <dovetail>/runtime/tools/fuse-build.mjs <json config path> with Vite's build API,
+        root the shell dir, entry the shell's index.html, outDir <dist> (default <out>/dist), the svelte plugin, the
+        tailwindcss vite plugin, the resolveId binding hook and the aliases; failure is D-FUS-004 with the build output.
+        (8) with --verify build again with development true into <dist>/verify-build and run Dovetail::Verify.run on it.
+        (9) write <dist>/fuse-report.json with the spec's report fields plus steps. Exit 0 fused, 1 a check failed, 2
+        could not run. Without Node the fuse stops after step 6 and reports build skipped (exit 0). All of this except
+        steps 3, 7 and 8 must run on Ruby 2.6.
+      tailwind_entry: |
+        <out>/app.css, generated from vocabulary.yml:
+        @import "tailwindcss";
+        @source "<each panel dir>";
+        @source "<shell dir>";
+        @custom-variant dark (&:where([data-color-scheme=dark], [data-color-scheme=dark] *));
+        @theme inline {
+          --*: initial;
+          --color-<each color token>: var(--<token>);
+          --color-transparent: transparent;
+          --color-current: currentColor;
+          --spacing: var(--space-1);
+          --radius-<each radius token>: var(--corner-<token>);
+          --text-<each type token>: var(--type-<token>);
+          --text-<each type token>--line-height: var(--type-<token>-leading);
+          --font-weight-<each weight token>: var(--weight-<token>);
+          --shadow-<each shadow token>: var(--elevation-<token>);
+          --font-sans: var(--family-sans);
+          --font-mono: var(--family-mono);
+          --ease-theme: var(--motion-ease);
+          --default-transition-duration: var(--motion-base);
+          --default-transition-timing-function: var(--motion-ease);
+          --breakpoint-sm: 640px; --breakpoint-md: 768px; --breakpoint-lg: 1024px; --breakpoint-xl: 1280px;
+          --container-sm: 320px; --container-md: 480px; --container-lg: 640px; --container-xl: 800px;
+          --leading-none: 1; --leading-tight: 1.25; --leading-snug: 1.375; --leading-normal: 1.5; --leading-relaxed: 1.625;
+          --tracking-tight: -0.025em; --tracking-normal: 0em; --tracking-wide: 0.025em;
+          --animate-pulse: pulse 1.6s ease-in-out infinite;
+          --animate-spin: spin 1s linear infinite;
+        }
+        @utility duration-fast { transition-duration: var(--motion-fast); }
+        @utility duration-base { transition-duration: var(--motion-base); }
+        @utility duration-slow { transition-duration: var(--motion-slow); }
+        plus the @keyframes pulse and spin. After building, inspect the emitted CSS - bg-surface-2 must set
+        background-color to var(--surface-2), rounded-lg to var(--corner-lg), text-sm to var(--type-sm), and no custom
+        property may be defined in terms of itself. If Tailwind emits self-referencing theme variables or ignores a
+        mapping, replace that family's @theme lines with explicit @utility definitions generated from vocabulary.yml
+        and report which families needed it.
+      verify: >
+        lib/dovetail/verify.rb and lib/dovetail/verify/** run on Ruby >= 3.0 and require ferrum lazily; on older Ruby or
+        without ferrum, exit 2 with "dovetail verify needs Ruby 3.0 or newer with the ferrum gem (bundle install --with
+        verify)". Dovetail::Verify.run(build_dir:, screenshots_dir:, timeout_s: 180) serves build_dir on 127.0.0.1 with a
+        TCPServer static server (SPA fallback to index.html, correct content types, bound to 127.0.0.1 only, port 0),
+        launches Ferrum with browser_path /usr/bin/google-chrome when present (ENV BROWSER_PATH wins), headless, waits
+        for window.__dovetail.ready(), and runs the spec's composition_verifier journeys through the development hooks -
+        overlays (each declared overlay - open, focus inside, Escape when dismissible, focus returned, scroll lock
+        released), stacked blocking overlays from two different panels, every declared route (owning panel renders; the
+        route log shows no other module), every declared event (fixture payload; every consumer received it; no
+        non-consumer did), each view in each required state (forceState, unmount, mount, wait for viewStates, rendering
+        non-empty, no console error), unmount and remount each panel with leaks all zero, each slot at its min_width and
+        at 1280 px (no panel's content wider than its slot - scroll sizes within the rect), crash each panel (fallback
+        renders with role alert, every other panel still responds to a navigation), axe-core
+        (<dovetail>/runtime/node_modules/axe-core/axe.min.js injected) on every route with serious and critical
+        violations failing, and the global assertions (no uncaught exceptions, no console.error, no failed requests; the
+        development transport makes none). Every failure is D-VER-001 naming the journey and panel with a screenshot in
+        screenshots_dir. Returns a Hash for the report's verify section; verify <dist> uses <dist>/verify-build and
+        exits 0 or 1 (2 when it cannot run). Total under 180 seconds for ten panels.
+      dev: >
+        dovetail dev --app <shell> --panels <dir>... [--backend <url>] [--static] [--port <n>, default 5173]. Compiles,
+        checks and generates as fuse steps 1, 2, 4, 5 and 6 with development true, writes <out>/dev-findings.json, then
+        starts node <dovetail>/runtime/tools/dev-server.mjs (Vite dev server on 127.0.0.1 with the same plugins and
+        resolution; --backend <url> adds a Vite proxy from /api to that URL and sets VITE_DOVETAIL_BACKEND=proxy, which
+        makes the shell template use the HTTP transport). The Ruby side polls panel and contract files every second (mtime, standard
+        library only) and on change recompiles, re-checks the changed panel, rewrites dev-findings.json and prints the
+        findings; dev-server.mjs watches that file and sends server.ws.send({ type: 'custom', event: 'dovetail:findings',
+        data }). --static does not need Node - it serves one page on 127.0.0.1 (TCPServer) listing the findings per panel,
+        styled with the first theme's tokens (scoped CSS, same visual rules as the runtime), refreshing its data every 2
+        seconds with a meta refresh only while the page is open. Ctrl-C stops both processes cleanly.
+      messages_check: >
+        dovetail messages check [--app <shell>] [--panels <dir>...] lists, per panel and per locale file in
+        messages/<locale>.json, the keys present in en-US but missing in that locale, and keys without the module prefix;
+        exit 1 when anything is missing.
+      new: >
+        dovetail new shell <name> creates <name>/ with dovetail.yml, ui/ (from templates/shell) and an empty modules/.
+        dovetail new panel <name> (run inside an app, found by dovetail.yml) creates modules/<name>/contract.rb and
+        modules/<name>/panel/ from templates/panel, substituting {{module}}, {{Module}} (title) and {{namespace}}
+        (/<name with _ as ->) in file contents, and adds a navigation entry to ui/layout.yml. Refuses to overwrite an
+        existing directory (exit 1).
+      templates: >
+        templates/shell - dovetail.yml (the spec's example with require_signed false, themes ui/themes/*.json, layout
+        ui/layout.yml, shell ui); ui/layout.yml (slots nav - strip, region nav, heading_level 2; main - main, main, 2;
+        aside - aside, aside, 3; tiles - tile, main, 3; dock - strip, dock, 3; navigation []; home null; the spec's
+        breakpoints); ui/index.html (lang en, a #app div,
+        body margin 0, the module script ./main.ts); ui/main.ts (import '$dovetail/app.css'; mount App); ui/App.svelte
+        (the shell layout, below); ui/messages/en-US.json ({"shell.title": "Dovetail app", "shell.nav": "Sections",
+        "shell.dock": "Dock"}); ui/themes/apple-noir.json, apple-austere.json, tronwave.json per themes.
+        templates/panel - contract.rb (Dovetail.contract(:{{module}}, version: 1) with one type, one operation, one
+        panel with a main slot, one view with the five states, capability :navigation, route '{{namespace}}', tokens
+        :default); panel/src/Panel.svelte (one View and States wired to the operation through the generated client, an h2
+        using t('{{module}}.title'), token classes only, compliant with every rule); panel/src/cutouts/.keep (empty
+        file); panel/messages/en-US.json ({"{{module}}.title": "{{Module}}"}); panel/README.md (what the brief is, where
+        it comes from - dovetail brief - and the nine seams in one line each, plain words, no em-dashes).
+      shell_app_svelte: >
+        App.svelte imports registry from '$registry', DovetailShell, Slot, useNavigation, createDevelopmentTransport and
+        createHttpTransport from '@dovetail/runtime'; the transport is createDevelopmentTransport() when
+        registry.development is true and import.meta.env.VITE_DOVETAIL_BACKEND is unset, else createHttpTransport({
+        baseUrl: '' }); theme is registry.themes[0];
+        locale 'en-US'. Layout, scoped CSS with var() only - root min-height 100dvh, background var(--surface), color
+        var(--text), font var(--family-sans); a header 56 px tall (calc(var(--space-1) * 14)), padding-inline
+        var(--space-6), border-bottom 1px solid var(--border), holding an h1 with t('shell.title') in var(--type-base)
+        var(--weight-semibold); a nav (aria-label t('shell.nav')) on one line, 44 px tall (calc(var(--space-1) * 11)),
+        padding-inline var(--space-6), border-bottom 1px solid var(--border), overflow-x auto, items gap var(--space-5)
+        as links in var(--type-sm) var(--weight-medium) var(--text-dim), hover var(--text), the active one var(--text)
+        with a 2px var(--accent) bar on its bottom edge, aria-current page; a content area max-width var(--max-width),
+        margin-inline auto, padding var(--space-6) (var(--space-4) below 768 px), a grid of minmax(0, 1fr) and
+        minmax(calc(var(--space-1) * 70), calc(var(--space-1) * 90)) columns with gap var(--space-6) at 768 px and up
+        when the aside slot has a panel, single column otherwise; main holds <Slot name="main" /> and, below it on the
+        home route, a tiles grid (repeat(auto-fill, minmax(calc(var(--space-1) * 70), 1fr)), gap var(--space-4)) with
+        <Slot name="tiles" />; aside holds <Slot name="aside" />; a dock band at the bottom (border-top 1px solid
+        var(--border), padding var(--space-3) var(--space-6), max-height calc(var(--space-1) * 40), overflow auto,
+        aria-label t('shell.dock')) with <Slot name="dock" />, rendered only when a panel uses it. No theme switcher.
+        Landmarks - header, nav, main, aside, and the dock as a section with its label.
+      themes: >
+        Write ui/themes/<id>.json for apple-noir, apple-austere and tronwave by reading ~/rstack/themes/<id>.yml once
+        (copy the values into the JSON; never reference the YAML from code or config). id, name (meta.name),
+        color_scheme (meta.color_scheme). tokens - surface <- tokens.bg; surface-2 <- tokens.surface; surface-3 <-
+        tokens.surface-2; text, text-dim, text-faint, accent, accent-hover, accent-contrast, border, border-strong <-
+        the same names; success <- ok; warning <- warn; danger <- danger; info <- text-dim; space-<n> <- n times 4 px
+        ("0" for 0, "2px" for 0.5, "6px" for 1.5, keys with _ for dots); corner-none "0", corner-sm <- radius-sm,
+        corner-md <- radius, corner-lg <- 1.5 times radius rounded to whole px, corner-xl <- 2 times radius,
+        corner-full <- radius-pill; type-xs 12px/16px, type-sm 14px/20px, type-base 16px/24px, type-lg 18px/28px,
+        type-xl 20px/28px, type-2xl 24px/32px, type-3xl 30px/36px (size in type-<n>, line height in type-<n>-leading);
+        weight-regular 400, weight-medium 500, weight-semibold 600, weight-bold 700; elevation-none "none",
+        elevation-lg <- tokens.shadow, elevation-sm "0 1px 2px <the rgba colour from tokens.shadow with half its
+        alpha>", elevation-md "0 4px 12px <that colour with three quarters of its alpha>"; motion-fast 120ms,
+        motion-base 200ms, motion-slow 320ms, motion-ease <- structural.ease; scrim <- scrim; accent-soft <-
+        accent-soft; danger-contrast <- danger-contrast; family-sans <- structural.font-sans; family-mono <-
+        structural.font-mono; family-display <- tokens.font-display; max-width <- structural.maxw. Report the three
+        files' key counts (all equal to theme_keys).
+      node_tools: >
+        runtime/tools/fuse-build.mjs and runtime/tools/dev-server.mjs import vite, @sveltejs/vite-plugin-svelte and
+        @tailwindcss/vite, which resolve from runtime/node_modules because the scripts live in runtime/. They read one
+        JSON argument file written by the Ruby side ({root, outDir, development, panels: [{module, dir}], out, runtime,
+        backend, port}) and exit non-zero on failure with the error on stderr. Do not edit runtime/package.json; if a
+        package is missing, report it. Wait for runtime/node_modules to exist (slice C installs it early) before
+        running them.
+      gemfile_lock: >
+        Run bundle config set --local path vendor/bundle and bundle install --with verify on /usr/bin/ruby so ferrum
+        and its dependencies are available; Gemfile.lock is yours.
+    acceptance:
+      - >-
+        dovetail new shell demo in the scratch directory, then dovetail new panel for three modules there (finance from
+        the spec's worked_example, replacing the template contract and panel with the spec's worked contract and a
+        compliant panel; and two template panels, one of them with an overlay and a consumed event of finance's).
+      - >-
+        dovetail fuse --verify in that app exits 0 with a fuse-report.json holding every step, the production dist
+        served on 127.0.0.1 renders the three panels, and every verify journey passes; report the journey list with
+        counts.
+      - >-
+        Crafted breakages each fail with the right code and exit 1 - two panels sharing a route (D-FUS-002), a panel
+        with setInterval (D-FUS-001), a consumed event that the producer lacks (D-FUS-003), a theme missing a key
+        (D-TOK-001), a Svelte syntax error (D-FUS-004 or D-FUS-001), and a verify failure (a panel that renders outside
+        its slot with a style the checker cannot see is not possible, so instead make one panel's view never render
+        its error state in a way the checker misses - if you cannot construct one, say so).
+      - >-
+        Fuse of ten panels (template panels generated for the ten Grokit module ids) with node false runs in under 8
+        seconds inside ruby:2.6.10-slim; verify of the same ten with Node and Chrome runs in under 180 seconds.
+      - >-
+        dovetail dev serves the app, a change to a panel file that adds setInterval prints the finding and the in-page
+        toolbar shows it; dev --static serves the findings page on 127.0.0.1 only.
+      - dovetail messages check reports a missing key you remove.
+
+integration:
+  owner: primary
+  steps:
+    - >-
+      Review every slice's report, then read the code for the cross-slice contracts (model JSON, shape, registry entry,
+      binding, registry.generated.ts, development hooks) myself.
+    - >-
+      Run the end-to-end on a clean scratch app - new shell, the worked finance panel plus two template panels, compile,
+      sign, check with --require-signed (including Reach's form), fuse --verify - on Ruby 3.3 and the Ruby 2.6 parts in
+      ruby:2.6.10-slim; drive the fused app in Chrome in all three themes and look at it.
+    - Write README.md, CHANGELOG.md, VERSION and docs/ (the spec's guides and reference) from the real behaviour.
+
+shared_surfaces_resolved:
+  - Foundation files are written once by slice_a with the verbatim content above; others may write identical bytes.
+  - runtime/package.json and package-lock.json belong to slice_c; slice_d's runtime/tools scripts use them read-only.
+  - lib/dovetail/tokens/vocabulary.yml belongs to slice_b; slice_c and slice_d read it (slice_c only for reference).
+  - specs/, docs/, README.md, CHANGELOG.md, VERSION and TMP_AGENT_FILE_LOCKS.yml belong to the primary.
+
+out_of_scope:
+  - Tests of any kind (Part S), CI configuration, publishing the gem or the npm package.
+  - Changes to Reach, Teach or Grokit.
+  - docs/, README.md and CHANGELOG.md (the primary writes them after integration).
+  - Any theme switcher UI.

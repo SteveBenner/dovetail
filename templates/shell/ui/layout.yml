@@ -1,0 +1,28 @@
+slots:
+  - name: nav
+    size: strip
+    region: nav
+    heading_level: 2
+  - name: main
+    size: main
+    region: main
+    heading_level: 2
+  - name: aside
+    size: aside
+    region: aside
+    heading_level: 3
+  - name: tiles
+    size: tile
+    region: main
+    heading_level: 3
+  - name: dock
+    size: strip
+    region: dock
+    heading_level: 3
+navigation: []
+breakpoints:
+  sm: 640
+  md: 768
+  lg: 1024
+  xl: 1280
+home: null

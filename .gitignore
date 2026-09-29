@@ -1,0 +1,9 @@
+/.bundle/
+/vendor/bundle/
+/runtime/node_modules/
+/runtime/dist/
+/runtime/.svelte-kit/
+.dovetail/
+/pkg/
+*.gem
+TMP_AGENT_FILE_LOCKS.yml

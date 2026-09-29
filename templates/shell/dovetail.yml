@@ -1,0 +1,11 @@
+contracts: modules/*/contract.rb
+panels: modules/*/panel
+shell: ui
+out: .dovetail
+public_keys: []
+require_signed: false
+rules_profile: strict
+layout: ui/layout.yml
+themes: ui/themes/*.json
+live: []
+live_base: /live/
