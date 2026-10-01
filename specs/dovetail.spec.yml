@@ -1,7 +1,7 @@
 ---
 schema: dovetail.spec/v1
 name: dovetail
-version: 0.3.0
+version: 0.3.1
 status: draft
 recorded: '2026-09-26'
 licence: AGPL-3.0, matching Grokit (to be confirmed for the library)
@@ -1104,7 +1104,7 @@ cli:
     purpose: Run the development server (see development_server)
   - name: messages
     synopsis: dovetail messages check [--app <shell>] [--panels <dir>...]
-    purpose: List message keys missing per locale
+    purpose: List message keys missing per locale, and runtime keys the shell does not translate
   - name: checker
     synopsis: dovetail checker export <dir>
     purpose: Write a self-contained, standard-library-only copy of the shape checker
@@ -1493,6 +1493,8 @@ components:
   props:
     value: bindable
     options: "{value, label}[]"
+    aria-label: string, set on the trigger
+    data-testid: string, set on the trigger
 - name: Checkbox
   props:
     checked: bindable
@@ -2067,7 +2069,12 @@ messages:
   keys: >-
     Prefixed by the module id (finance.margin.title); the checker flags a key without the prefix as S-I18N-001 (warning).
   fallback: en-US; a missing key renders the en-US text and logs once in development.
-  review: dovetail messages check lists keys missing per locale.
+  runtime_keys: >-
+    The runtime's own dovetail.* keys ship in en-US only. The shell's messages/<locale>.json translates them for every
+    other locale the shell or a panel ships; its entries override the runtime's.
+  review: >-
+    dovetail messages check lists keys missing per locale, and, given the shell (--app or dovetail.yml), the runtime
+    keys its catalog lacks for each such locale (missing_runtime_key).
 development_server:
   command: dovetail dev --app <shell> --panels <dir>...
   behaviour:
@@ -2764,6 +2771,11 @@ implementation_decisions:
     that bare specifier before evaluating the compiled component, and rewrites a relative import of another live file
     to that file's own entry the same way, so nesting live components works without the browser needing to know the
     application's file layout.
+- date: '2026-09-30'
+  topic: live components, import rewriting
+  decision: >-
+    The loader rewrites only import and export statements that begin a line of the compiled component, and dynamic
+    import() calls, so text such as a message key ending in from followed by a quote is never read as an import.
 - date: '2026-09-28'
   topic: live components, styling safelist
   decision: >-

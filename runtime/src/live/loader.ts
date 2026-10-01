@@ -31,7 +31,7 @@ function resolveSpecifier(specifier: string, rel: string, mod: string): string {
   throw new Error(`disallowed import '${specifier}'`);
 }
 
-const IMPORT_SPECIFIER_RE = /(from\s*)(['"])([^'"]+)\2|(import\s*\(\s*)(['"])([^'"]+)\5(\s*\))/g;
+const IMPORT_SPECIFIER_RE = /^(\s*(?:import|export)\b[^'";]*?\bfrom\s*)(['"])([^'"]+)\2|(\bimport\s*\(\s*)(['"])([^'"]+)\5(\s*\))/gm;
 
 export function rewriteImports(code: string, rel: string, mod: string): string {
   return code.replace(

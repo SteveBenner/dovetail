@@ -13,9 +13,11 @@
   interface Props {
     value?: string;
     options: Option[];
+    'aria-label'?: string;
+    'data-testid'?: string;
   }
 
-  let { value = $bindable(''), options }: Props = $props();
+  let { value = $bindable(''), options, 'aria-label': ariaLabel, 'data-testid': testId }: Props = $props();
 
   const field = getContext<FieldContextValue | undefined>(FIELD_CONTEXT);
 
@@ -97,6 +99,8 @@
   type="button"
   class="dt-select-trigger"
   id={field?.controlId}
+  aria-label={ariaLabel}
+  data-testid={testId}
   aria-describedby={field?.describedBy}
   aria-haspopup="listbox"
   aria-expanded={open}

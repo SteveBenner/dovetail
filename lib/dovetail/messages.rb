@@ -13,8 +13,30 @@ module Dovetail
       nil
     end
 
-    def check(panel_dirs)
-      findings = []
+    def runtime_keys
+      JSON.parse(File.read(File.join(Dovetail.root, "runtime", "src", "i18n", "messages", "en-US.json"))).keys
+    end
+
+    def locales_in(dir)
+      return [] unless Dir.exist?(dir)
+      Dir.glob(File.join(dir, "*.json")).map { |path| File.basename(path, ".json") }
+    end
+
+    def check_shell(shell_dir, panel_dirs)
+      messages_dir = File.join(shell_dir, "messages")
+      locales = (locales_in(messages_dir) + panel_dirs.flat_map { |dir| locales_in(File.join(dir, "messages")) }).uniq.sort - ["en-US"]
+      keys = runtime_keys
+      locales.flat_map do |locale|
+        path = File.join(messages_dir, "#{locale}.json")
+        present = File.file?(path) ? JSON.parse(File.read(path)).keys : []
+        (keys - present).map do |key|
+          { "panel" => shell_dir, "locale" => locale, "key" => key, "issue" => "missing_runtime_key" }
+        end
+      end
+    end
+
+    def check(panel_dirs, shell_dir: nil)
+      findings = shell_dir ? check_shell(shell_dir, panel_dirs) : []
       panel_dirs.each do |panel_dir|
         messages_dir = File.join(panel_dir, "messages")
         next unless Dir.exist?(messages_dir)

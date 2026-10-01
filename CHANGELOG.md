@@ -4,6 +4,22 @@ All notable changes to Dovetail are recorded here. The project follows [Semantic
 rule ids are stable, the shape schema changes only with a new schema id, and the runtime's exported API follows
 semver.
 
+## [0.3.1] - 2026-09-30
+
+### Added
+
+- `Select` takes `aria-label` and `data-testid`, set on its trigger, so a picker can be labelled and found without a
+  spread attribute or a wrapping element.
+- `dovetail messages check`, given the shell (`--app` or `dovetail.yml`), reports `missing_runtime_key` for each
+  runtime `dovetail.*` key the shell's `messages/<locale>.json` does not translate, for every locale other than en-US
+  that the shell or a panel ships. The shell's entries already override the runtime's; the spec now says so.
+
+### Fixed
+
+- The live-component loader read any text `from'` in a compiled component as an import, so a message key ending in
+  `from` failed the whole panel with a disallowed import. It now rewrites only import and export statements and
+  dynamic `import()` calls.
+
 ## [0.3.0] - 2026-09-28
 
 ### Added

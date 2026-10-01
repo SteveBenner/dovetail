@@ -51,7 +51,7 @@ $ (cd runtime && npm install && npm run build)
 $ bundle config set --local path vendor/bundle
 $ bundle install --with verify
 $ ruby exe/dovetail --version
-dovetail 0.3.0
+dovetail 0.3.1
 ```
 
 Put `exe/` on your `PATH` or call `ruby path/to/dovetail/exe/dovetail`.
