@@ -1,7 +1,7 @@
 ---
 schema: dovetail.spec/v1
 name: dovetail
-version: 0.3.1
+version: 0.3.2
 status: draft
 recorded: '2026-09-26'
 licence: AGPL-3.0, matching Grokit (to be confirmed for the library)
@@ -1557,6 +1557,7 @@ wire_protocol:
       Content-Type: application/json
       X-Dovetail-Contract: "<module>@<version>"
       X-Request-Id: a UUID
+      Accept-Language: the active locale code, so a server may localize what it answers
     body: The operation input as JSON.
   response:
     ok: "{status: ok, data, contract_version, negotiated?: {requested, served}}"

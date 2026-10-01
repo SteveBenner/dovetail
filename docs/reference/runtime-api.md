@@ -253,6 +253,7 @@ A request is `POST /api/v1/modules/<module>/<operation>` with the input as JSON 
 | `Content-Type` | `application/json` |
 | `X-Dovetail-Contract` | `<module>@<version>` |
 | `X-Request-Id` | a UUID |
+| `Accept-Language` | the active locale code (`en-US` by default), so a server may localize what it answers |
 
 A response is `{ "status": "ok", "data": ..., "contract_version": N }` or `{ "status": "error", "errors": [{ "code",
 "message", "path" }], "contract_version": N }`. A server answering an older version's call that `dovetail contract

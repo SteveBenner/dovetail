@@ -193,7 +193,8 @@ export function createHttpTransport(options: HttpTransportOptions = {}): Transpo
         headers: {
           'Content-Type': 'application/json',
           'X-Dovetail-Contract': `${module}@${callOptions.contract_version}`,
-          'X-Request-Id': crypto.randomUUID()
+          'X-Request-Id': crypto.randomUUID(),
+          'Accept-Language': runtime.locale
         },
         body: JSON.stringify(input),
         signal: controller.signal

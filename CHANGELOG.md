@@ -4,6 +4,13 @@ All notable changes to Dovetail are recorded here. The project follows [Semantic
 rule ids are stable, the shape schema changes only with a new schema id, and the runtime's exported API follows
 semver.
 
+## [0.3.2] - 2026-09-30
+
+### Added
+
+- Every operation call carries `Accept-Language` with the active locale code, so a server may localize what it
+  answers (labels drawn from its own data, for example) without a panel passing the locale itself.
+
 ## [0.3.1] - 2026-09-30
 
 ### Added
