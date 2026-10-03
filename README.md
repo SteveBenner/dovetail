@@ -98,6 +98,7 @@ The full specification is [specs/dovetail.spec.yml](specs/dovetail.spec.yml).
 | `lib/dovetail/contract/` | The DSL, the contract model and its validation |
 | `lib/dovetail/compiler/` | The JSON Schema, TypeScript, client, shape, brief and registry emitters |
 | `lib/dovetail/shape/` | The shape checker and its rule catalogue |
+| `bin/components-table` | Regenerates `lib/dovetail/shape/components.yml`, the table of runtime component props the shape checker reads; `--check` exits 1 when it is stale |
 | `lib/dovetail/tokens/` | The token vocabulary and the class grammar |
 | `lib/dovetail/fuse/`, `lib/dovetail/verify/` | The fuser and the composition verifier |
 | `runtime/` | `@dovetail/runtime`, the Svelte 5 and TypeScript browser library |

@@ -1,0 +1,115 @@
+#!/usr/bin/env ruby
+require "fileutils"
+
+ROOT = File.expand_path("..", __dir__)
+RUNTIME = File.join(ROOT, "runtime", "src")
+TARGET = File.join(ROOT, "lib", "dovetail", "shape", "components.yml")
+
+def exported_components
+  index = File.read(File.join(RUNTIME, "index.ts"))
+  index.scan(%r{export\s*\{\s*default\s+as\s+(\w+)\s*\}\s*from\s*'\./components/([\w-]+)\.svelte'}).map do |name, file|
+    [name, File.join(RUNTIME, "components", "#{file}.svelte")]
+  end
+end
+
+def balanced_body(text, open_index)
+  depth = 0
+  index = open_index
+  while index < text.length
+    ch = text[index]
+    if ch == "{"
+      depth += 1
+    elsif ch == "}"
+      depth -= 1
+      return text[(open_index + 1)...index] if depth.zero?
+    end
+    index += 1
+  end
+  abort "unbalanced braces"
+end
+
+def props_keys(source, name)
+  match = source.match(/interface\s+Props\s*\{/)
+  abort "#{name}: no Props interface" unless match
+  body = balanced_body(source, match.end(0) - 1)
+  keys = []
+  depth = 0
+  body.each_line do |line|
+    if depth.zero?
+      key = line.match(/\A\s*(?:'([^']+)'|"([^"]+)"|([A-Za-z_$][\w$]*))\??\s*:/)
+      keys << (key[1] || key[2] || key[3]) if key
+    end
+    depth += line.count("{[(") - line.count("}])")
+  end
+  keys
+end
+
+def split_top_level(text)
+  parts = []
+  current = +""
+  depth = 0
+  quote = nil
+  text.each_char do |ch|
+    if quote
+      current << ch
+      quote = nil if ch == quote
+    elsif ch == "'" || ch == '"' || ch == "`"
+      quote = ch
+      current << ch
+    elsif "{[(".include?(ch)
+      depth += 1
+      current << ch
+    elsif "}])".include?(ch)
+      depth -= 1
+      current << ch
+    elsif ch == "," && depth.zero?
+      parts << current
+      current = +""
+    else
+      current << ch
+    end
+  end
+  parts << current
+  parts.map(&:strip).reject(&:empty?)
+end
+
+def destructuring(source, name)
+  match = source.match(/let\s*\{/)
+  abort "#{name}: no $props() destructuring" unless match && source =~ /\}\s*:\s*Props\s*=\s*\$props\(\)/
+  start = source.index(/let\s*\{[^;]*?\}\s*:\s*Props\s*=\s*\$props\(\)/m)
+  open_index = source.index("{", start)
+  split_top_level(balanced_body(source, open_index))
+end
+
+def quote(key)
+  key.match?(/\A[A-Za-z_][\w]*\z/) && !%w[true false null yes no on off].include?(key.downcase) ? key : "'#{key}'"
+end
+
+lines = ["components:"]
+exported_components.each do |name, path|
+  abort "#{name}: #{path} missing" unless File.file?(path)
+  source = File.read(path)
+  keys = props_keys(source, name)
+  entries = destructuring(source, name)
+  rest = entries.any? { |e| e.start_with?("...") }
+  bindable = entries.select { |e| e.include?("$bindable") }.map do |e|
+    e[/\A(?:'([^']+)'|"([^"]+)"|([A-Za-z_$][\w$]*))/].then { |m| m.delete("'\"") }
+  end
+  lines << "  #{name}:"
+  lines << "    props: [#{keys.map { |k| quote(k) }.join(', ')}]"
+  lines << "    bindable: [#{bindable.map { |k| quote(k) }.join(', ')}]"
+  lines << "    rest: #{rest}"
+end
+output = lines.join("\n") + "\n"
+
+if ARGV.include?("--check")
+  current = File.file?(TARGET) ? File.read(TARGET) : nil
+  if current == output
+    exit 0
+  else
+    warn "#{TARGET} is out of date; run bin/components-table"
+    exit 1
+  end
+else
+  File.write(TARGET, output)
+end

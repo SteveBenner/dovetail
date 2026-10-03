@@ -22,6 +22,7 @@ module Dovetail
       lib/dovetail/shape/finding.rb
       lib/dovetail/shape/rule_catalog.rb
       lib/dovetail/shape/rules.yml
+      lib/dovetail/shape/components.yml
       lib/dovetail/tokens.rb
       lib/dovetail/tokens/class_grammar.rb
       lib/dovetail/tokens/vocabulary.yml

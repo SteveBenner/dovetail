@@ -1,0 +1,79 @@
+schema: rstack.blueprint/v1
+task: dovetail-0.4.0-component-props
+intent: >
+  A real-agent smoke run showed a panel passing every local check while it handed Dovetail runtime components props
+  they do not declare (Select label, placeholder and onchange; EmptyState and ErrorState description; Skeleton class;
+  UnavailableState title). svelte-check rejects these during dovetail fuse (D-FUS-001), so a course build that fuses
+  the student's card would fail, yet the shape checker, the only check a student's computer runs (no Node there), says
+  nothing. This release gives the shape checker a table of every runtime component's props and a new strict-profile
+  rule that warns when a component is given a prop it does not declare. Sven decided on 2026-10-03 that the rule is a
+  warning, never an error, so it cannot fail grading (Teach fails every graded scenario on any shape error). Where this
+  file is silent, stop and report instead of choosing.
+harness: claude-code
+worker: { model: sonnet, effort: medium, definition: coding-worker }
+repository: ~/github/foss/dovetail (main, Dovetail 0.3.2 at ac9f3a6; GitHub SteveBenner/dovetail)
+
+read_first:
+  - AGENTS.md and README.md
+  - lib/dovetail/shape/checker.rb (check_svelte_file, check_element, labeled?, add), svelte_parser.rb (node.tag, node.attrs, attr.kind :static/:dynamic/:spread/:directive, attr.name), rule_catalog.rb, rules.yml
+  - lib/dovetail/checker_export.rb (FILES is what a student's computer receives)
+  - runtime/src/components/*.svelte (each declares interface Props and destructures it from $props(); Button, IconButton, TextInput and NumberInput also take ...rest)
+  - runtime/src/index.ts (which components are exported from @dovetail/runtime)
+  - specs/ (the app spec and the rule reference in docs/reference/), CHANGELOG.md, VERSION, lib/dovetail/version.rb
+
+constraints:
+  - No comments in any file (only frozen_string_literal magic comments and shebangs survive). No attribution. No tests unless one already exists for the area and the change breaks it; write no new test files.
+  - Delete nothing outside your scratch directory; never rm -r, git clean or find -delete. Run no git write; the primary commits.
+  - The checker must keep running on Ruby 2.6.10 and with no Node: it reads only YAML at check time.
+  - American English.
+
+design:
+  table: >-
+    New lib/dovetail/shape/components.yml, generated, never hand-edited: for each component exported from
+    @dovetail/runtime that is a .svelte file in runtime/src/components, its name, props (every key of its Props
+    interface, quoted keys such as 'aria-label' and 'data-testid' included, in declaration order), bindable (props
+    destructured with $bindable), and rest: true when it destructures ...rest. A new script, bin/components-table
+    (Ruby, plain text parsing of the Props interface and the $props() destructuring, no Node), writes it, and
+    --check exits 1 when the file differs from what it would write. Add components.yml to CheckerExport::FILES.
+  rule: >-
+    S-PROP-001 in rules.yml, severity warning in the strict profile and absent from lighter profiles if the catalog
+    has them: in a .svelte file, an element whose tag names a component in components.yml that the file imports from
+    '@dovetail/runtime' (under that name, or an alias the import declares) is given an attribute that is not one of its
+    props. Attributes never flagged: spreads, directives (bind:value counts as the prop value; bind:x is checked as x),
+    svelte special attributes (this, slot, children snippets), key, and any attribute when the component has rest:
+    true. Message: "<Tag> has no prop <name>; its props are <comma list>". One finding per attribute.
+  label_contradiction: >-
+    S-HTML-003 treats a label attribute as labelling Select, TextInput and NumberInput. Select declares no label prop,
+    so that advice leads to the S-PROP-001 warning. Change labeled? for these components so label counts only when the
+    component's table entry declares label; aria-label, aria-labelledby, title, a spread, or being inside a <Field>
+    still count, exactly as today.
+  docs: >-
+    docs/reference rule list gains S-PROP-001; the app spec gains the rule and the table; README mentions
+    bin/components-table. Version 0.4.0 in VERSION and lib/dovetail/version.rb (and Gemfile.lock's dovetail line);
+    CHANGELOG entry dated 2026-10-03.
+
+owns_paths:
+  - lib/dovetail/shape/components.yml
+  - bin/components-table
+  - lib/dovetail/shape/checker.rb
+  - lib/dovetail/shape/rules.yml
+  - lib/dovetail/checker_export.rb
+  - docs/reference/** (the rule list only)
+  - specs/app.yml or the repository's app spec file
+  - README.md, CHANGELOG.md, VERSION, lib/dovetail/version.rb, Gemfile.lock
+
+acceptance:
+  - bin/components-table --check exits 0 after generation; the table holds Select with props value, options, aria-label, data-testid and no rest.
+  - >-
+    A scratch panel built from the smoke agent's card at
+    ~/.cache/reach-smoke/slice-build/20261002_215550/context/home/reach-work/deliverables/MGMT327FA26/A4/context.a4s2-panel/modules/context/panel/src/cutouts/RegionalProfile.svelte
+    checked with exe/dovetail check <panel dir> <shape> --profile strict (shape compiled from Grokit's context contract
+    at ~/bitbucket/paterasai/grokit/modules/context, as the smoke harness does) reports S-PROP-001 warnings for Select
+    label, placeholder and onchange, EmptyState description, the Skeleton class props, UnavailableState title and
+    ErrorState description, no errors, and S-HTML-003 does not fire on that Select.
+  - Grokit's ten reference panels (~/bitbucket/paterasai/grokit/modules/*/panel) each check strict with no S-PROP-001 finding and no new error; list any that warn.
+  - exe/dovetail check runs under ruby:2.6.10-slim on the exported checker (exe/dovetail export-checker or the CheckerExport API into a scratch dir).
+  - The existing test suite, if any, passes as before.
+
+report:
+  - Commands run per acceptance item, trimmed output, every file changed, and anything here that did not fit the code.

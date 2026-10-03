@@ -4,7 +4,7 @@
 `dovetail rules` lists them and `dovetail rules <id>` prints one.
 
 Severity is the strict profile's. Under the relaxed profile S-LAY-003, S-HTML-002, S-CSS-005 are warnings instead of errors;
-every other rule keeps its severity. A rule that fires on a name the checker cannot read, because it is not a
+S-PROP-001 is not reported under the relaxed profile; every other rule keeps its severity. A rule that fires on a name the checker cannot read, because it is not a
 string literal, reports the same id as a warning saying the name cannot be checked.
 
 Two rules have a scope worth knowing. S-CSS-001 does not apply to a class that the component's own style block
@@ -40,6 +40,7 @@ is satisfied by a View that contains States, because States renders a default fo
 | [S-HTML-002](#s-html-002) | Layout | error | A heading above the slot's starting level |
 | [S-HTML-003](#s-html-003) | Layout | error | A form control without a label |
 | [S-HTML-004](#s-html-004) | Security | warning | Any {@html} block |
+| [S-PROP-001](#s-prop-001) | Any seam | warning | A Dovetail runtime component given a prop it does not declare |
 | [S-I18N-001](#s-i18n-001) | Messages | warning | A message key without the module prefix |
 | [S-STATE-001](#s-state-001) | View states | error | A declared view that does not render one of its required states |
 | [S-DYN-001](#s-dyn-001) | Any seam | error | Computed access to globals (globalThis[...], window[...]) and eval, Function, new Function |
@@ -638,6 +639,28 @@ Compliant:
 
 ```
 <p>{review.body}</p>  (text is escaped by default)
+```
+
+## S-PROP-001
+
+Seam: Any seam. Severity: warning.
+
+**Finds.** A Dovetail runtime component given a prop it does not declare
+
+**Fix.** Pass only the props the component declares; the message lists them
+
+**Why it breaks fusion.** svelte-check rejects an undeclared prop when the panel is fused, so a course build fails even though the shape check passed.
+
+Violation:
+
+```
+<Select bind:value={region} label="Region" {options} />
+```
+
+Compliant:
+
+```
+<Select bind:value={region} aria-label="Region" {options} />
 ```
 
 ## S-I18N-001

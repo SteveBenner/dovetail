@@ -846,6 +846,15 @@ shape_checker:
     example_violation: "{@html review.body}"
     example_compliant: "<p>{review.body}</p>  (text is escaped by default)"
     why_it_breaks_fusion: Raw HTML from imported data can carry script into every panel on the page.
+  - id: S-PROP-001
+    seam: any
+    severity: warning
+    finds: A Dovetail runtime component given a prop it does not declare
+    fix: Pass only the props the component declares; the message lists them
+    example_violation: <Select bind:value={region} label="Region" {options} />
+    example_compliant: <Select bind:value={region} aria-label="Region" {options} />
+    why_it_breaks_fusion: svelte-check rejects an undeclared prop when the panel is fused, so a course build fails
+      even though the shape check passed.
   - id: S-I18N-001
     seam: messages
     severity: warning
@@ -891,6 +900,15 @@ shape_checker:
     example_compliant: The file is still checked by text scanning; report the construct so the parser can learn
       it.
     why_it_breaks_fusion: Unknown constructs are never assumed safe.
+  prop_detection: >-
+    S-PROP-001 reads lib/dovetail/shape/components.yml, a table of every component @dovetail/runtime exports (its
+    props, its bindable props, and rest: true when it accepts further attributes), generated from the runtime's
+    Props interfaces by bin/components-table (--check exits 1 when the file is stale) and shipped in the exported
+    checker. It warns on an attribute of an imported runtime component that is not one of its props, never on a
+    spread, a directive other than bind:, this, slot, key, or any attribute of a component with rest: true, and
+    never under the relaxed profile. S-HTML-003 still counts a label attribute as a label,
+    because it is an error that fails grading and a card that passes it today must keep passing; S-PROP-001 warns
+    about a label that Select does not declare.
   state_detection: >
     S-STATE-001 finds each view by its root component (<View name="...">) and checks that the component renders
     a branch for every required state through Dovetail's <States> helper or equivalent {#if} branches on the view's

@@ -1,0 +1,85 @@
+components:
+  Button:
+    props: [variant, size, disabled, reason, loading, onclick, children]
+    bindable: []
+    rest: true
+  IconButton:
+    props: [label, icon, variant, onclick]
+    bindable: []
+    rest: true
+  Field:
+    props: [label, hint, error, required, children]
+    bindable: []
+    rest: false
+  TextInput:
+    props: [value, placeholder, maxlength]
+    bindable: [value]
+    rest: true
+  NumberInput:
+    props: [value, min, max, step]
+    bindable: [value]
+    rest: true
+  Select:
+    props: [value, options, 'aria-label', 'data-testid']
+    bindable: [value]
+    rest: false
+  Checkbox:
+    props: [checked, label]
+    bindable: [checked]
+    rest: false
+  Switch:
+    props: [checked, label]
+    bindable: [checked]
+    rest: false
+  Tabs:
+    props: [tabs, active]
+    bindable: [active]
+    rest: false
+  Table:
+    props: [columns, rows, sort, empty]
+    bindable: [sort]
+    rest: false
+  Card:
+    props: [title, tone, children]
+    bindable: []
+    rest: false
+  Badge:
+    props: [tone, children]
+    bindable: []
+    rest: false
+  Stat:
+    props: [label, value, unit, trend]
+    bindable: []
+    rest: false
+  Skeleton:
+    props: [lines, shape]
+    bindable: []
+    rest: false
+  EmptyState:
+    props: [title, body, action]
+    bindable: []
+    rest: false
+  ErrorState:
+    props: [title, body, retry]
+    bindable: []
+    rest: false
+  UnavailableState:
+    props: [what, retry, retry_after_s]
+    bindable: []
+    rest: false
+  Tooltip:
+    props: [text, trigger, children]
+    bindable: []
+    rest: false
+  View:
+    props: [name, status, children]
+    bindable: []
+    rest: false
+  States:
+    props: [data, failure, retry, loading, empty, error, unavailable, ready]
+    bindable: []
+    rest: false
+  Overlay:
+    props: [name, open, anchor, children]
+    bindable: [open]
+    rest: false

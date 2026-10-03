@@ -4,6 +4,18 @@ All notable changes to Dovetail are recorded here. The project follows [Semantic
 rule ids are stable, the shape schema changes only with a new schema id, and the runtime's exported API follows
 semver.
 
+## [0.4.0] - 2026-10-03
+
+### Added
+
+- The shape checker knows every runtime component's props. `lib/dovetail/shape/components.yml` is generated from the
+  runtime's `Props` interfaces by `bin/components-table` (`--check` exits 1 when it is stale) and ships in the
+  exported checker.
+- Rule `S-PROP-001` (warning, strict profile) reports an attribute given to an imported `@dovetail/runtime`
+  component that the component does not declare, for example `label` on `Select`, which `svelte-check` rejects
+  during `dovetail fuse`. It never fires on spreads, directives other than `bind:`, `this`, `slot`, `key`, or a
+  component that takes `...rest`.
+
 ## [0.3.2] - 2026-09-30
 
 ### Added

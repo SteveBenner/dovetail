@@ -264,6 +264,15 @@ rules:
   example_compliant: "<p>{review.body}</p>  (text is escaped by default)"
   why_it_breaks_fusion: Raw HTML from imported data can carry script into every panel
     on the page.
+- id: S-PROP-001
+  seam: any
+  severity: warning
+  finds: A Dovetail runtime component given a prop it does not declare
+  fix: Pass only the props the component declares; the message lists them
+  example_violation: <Select bind:value={region} label="Region" {options} />
+  example_compliant: <Select bind:value={region} aria-label="Region" {options} />
+  why_it_breaks_fusion: svelte-check rejects an undeclared prop when the panel is
+    fused, so a course build fails even though the shape check passed.
 - id: S-I18N-001
   seam: messages
   severity: warning

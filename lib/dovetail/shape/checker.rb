@@ -1,4 +1,5 @@
 require "set"
+require "yaml"
 require_relative "svelte_parser"
 require_relative "js_scanner"
 require_relative "css_parser"
@@ -14,6 +15,12 @@ module Dovetail
         lime navy teal maroon olive silver gold indigo violet crimson coral salmon khaki
         turquoise beige ivory lavender
       ].freeze
+
+      COMPONENTS_PATH = File.expand_path("components.yml", __dir__)
+
+      LABEL_COMPONENTS = %w[TextInput NumberInput Select].freeze
+
+      SPECIAL_PROPS = %w[this slot key].freeze
 
       GLOBAL_TARGETS = %w[window document globalThis self].freeze
 
@@ -542,12 +549,14 @@ module Dovetail
         check_class_attrs(rel_path, node, is_root: is_root)
         check_style_attrs(rel_path, node, is_root: is_root)
 
+        check_component_props(rel_path, node)
+
         if %w[input select textarea].include?(tag.downcase)
           unless labeled?(attrs)
             add("S-HTML-003", rel_path, node.line, node.col, "<#{tag}> has no accessible label")
           end
         end
-        if %w[TextInput NumberInput Select].include?(tag)
+        if LABEL_COMPONENTS.include?(tag)
           unless labeled?(attrs)
             add("S-HTML-003", rel_path, node.line, node.col, "<#{tag}> outside a <Field> has no label")
           end
@@ -573,6 +582,35 @@ module Dovetail
         attr = attrs.find { |a| a.name == name }
         return nil unless attr
         attr.kind == :static ? attr.value : nil
+      end
+
+      def components
+        @@components ||= YAML.safe_load(File.read(COMPONENTS_PATH), permitted_classes: [], aliases: false).fetch("components")
+      end
+
+      def check_component_props(rel_path, node)
+        return if @profile == "relaxed"
+        original = (@runtime_bindings || {})[node.tag]
+        entry = original && components[original]
+        return unless entry
+        return if entry["rest"]
+        props = entry["props"]
+        node.attrs.each do |attr|
+          name = prop_name(attr)
+          next if name.nil? || SPECIAL_PROPS.include?(name) || props.include?(name)
+          add("S-PROP-001", rel_path, attr.line, attr.col, "<#{node.tag}> has no prop #{name}; its props are #{props.join(', ')}")
+        end
+      end
+
+      def prop_name(attr)
+        return nil if attr.kind == :spread
+        name = attr.name
+        return nil if name.start_with?("@")
+        if name.include?(":")
+          prefix, rest = name.split(":", 2)
+          return prefix == "bind" ? rest : nil
+        end
+        name
       end
 
       def labeled?(attrs)
