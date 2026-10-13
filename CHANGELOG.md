@@ -4,6 +4,12 @@ All notable changes to Dovetail are recorded here. The project follows [Semantic
 rule ids are stable, the shape schema changes only with a new schema id, and the runtime's exported API follows
 semver.
 
+## [0.2.1] - 2026-10-13
+
+### Fixed
+
+- `LICENSE` carries the GNU AGPL-3.0 text that `dovetail.gemspec` declares (`AGPL-3.0-only`), and the gem includes it in `spec.files`. The AGPL requires its text to travel with the code.
+
 ## [0.2.0] - 2026-09-28
 
 ### Added
