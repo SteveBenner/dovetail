@@ -111,6 +111,7 @@ The full specification is [specs/dovetail.spec.yml](specs/dovetail.spec.yml).
 
 ## Licence
 
-The intended licence is AGPL-3.0-only, matching Grokit, and `dovetail.gemspec` and `runtime/package.json` declare it.
-It is not final: whether the library should take a permissive licence so other projects can adopt it is an open
-question in the specification, and no licence file ships until that is settled.
+Dovetail is licensed AGPL-3.0-only, matching Grokit, as `dovetail.gemspec` and `runtime/package.json` declare, and
+`LICENSE` carries the licence text the AGPL requires to travel with the code. Whether the library should move to a
+permissive licence so other projects can adopt it is still an open question in the specification. A change would
+replace `LICENSE` in the release that makes it.
