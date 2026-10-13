@@ -1,7 +1,7 @@
 ---
 schema: dovetail.spec/v1
 name: dovetail
-version: 0.3.2
+version: 0.4.1
 status: draft
 recorded: '2026-09-26'
 licence: AGPL-3.0, matching Grokit (to be confirmed for the library)
