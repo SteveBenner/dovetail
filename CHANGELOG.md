@@ -4,6 +4,12 @@ All notable changes to Dovetail are recorded here. The project follows [Semantic
 rule ids are stable, the shape schema changes only with a new schema id, and the runtime's exported API follows
 semver.
 
+## [0.4.2] - 2026-10-13
+
+### Fixed
+
+- The README's Licence section no longer says that no licence file ships. `LICENSE` carries the AGPL-3.0 text that the package declares. Whether to move to a permissive licence is still an open question in the specification.
+
 ## [0.4.1] - 2026-10-13
 
 ### Fixed
