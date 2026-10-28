@@ -7,6 +7,7 @@ import { shortcutFor } from './seams/keyboard/index.js';
 import { everyFor, afterFor, frameFor, subscribeFor } from './seams/lifecycle/index.js';
 import { useIdFor } from './seams/identity/index.js';
 import { tInternal } from './i18n/t.js';
+import { registerCutoutMessages } from './i18n/cutouts.js';
 import { formatNumberFor, formatMoneyFor, formatDateFor, formatPercentFor } from './i18n/format.js';
 import { callOperation as callOperationImpl } from './seams/data/index.js';
 import { createHttpTransport as createHttpTransportImpl } from './transport/http.js';
@@ -99,6 +100,10 @@ export function useProps(): Record<string, unknown> {
 export function useContractVersion(): number {
   const module = resolveModule('useContractVersion');
   return findPanel(module)?.contract_version ?? 1;
+}
+
+export function messages(cutoutId: string, catalog: Record<string, Record<string, string>>): void {
+  registerCutoutMessages(null, cutoutId, catalog);
 }
 
 export function t(key: string, params?: Record<string, string | number>): string {

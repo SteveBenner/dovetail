@@ -317,7 +317,8 @@ module Dovetail
             body = @text[@pos..-1]
             advance(@len - @pos)
           end
-          context = attrs.find { |a| a.name == "context" }&.value == "module" ? :module : :instance
+          module_script = attrs.any? { |a| a.name == "module" } || attrs.find { |a| a.name == "context" }&.value == "module"
+          context = module_script ? :module : :instance
           @scripts << ScriptBlock.new(context, body, text_start[0], text_start[1])
           register_fragment(body, text_start[0], text_start[1])
           return :handled

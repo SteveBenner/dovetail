@@ -1,7 +1,7 @@
 ---
 schema: dovetail.spec/v1
 name: dovetail
-version: 0.4.2
+version: 0.5.0
 status: draft
 recorded: '2026-09-26'
 licence: AGPL-3.0, matching Grokit (to be confirmed for the library)
@@ -1073,7 +1073,8 @@ runtime:
       Idempotent operations only, at most 2 retries with exponential backoff and full jitter (250 ms base, 2 s cap);
       429 and 503 honour Retry-After.
   translations: t(key, params) with message files per locale; missing keys fall back to en-US and are logged in
-    development.
+    development. Since 0.5.0 messages(cutoutId, catalog) registers one cutout's own message block (see
+    messages.cutout_block).
   development_guards: >-
     Payload validation against JSON Schema, leak counters per panel, and a warning overlay listing any runtime seam
     violation the static checker could not see.
@@ -2094,6 +2095,19 @@ messages:
   review: >-
     dovetail messages check lists keys missing per locale, and, given the shell (--app or dovetail.yml), the runtime
     keys its catalog lacks for each such locale (missing_runtime_key).
+  cutout_block: >-
+    Since 0.5.0 a cutout component may carry its own wording: one <script module lang="ts"> that calls
+    messages('<cutout_id>', {"en-US": {"<cutout_id>.<name>": "text"}, "<locale>": {...}}), with the argument written
+    as a strict JSON object literal so tools can parse it without running it. The cutout id must start with the
+    panel's module id and a dot (opportunities.a2s1); every key must start with the cutout id and a dot. en-US is
+    required; another locale holds a subset of the en-US keys, and a key it lacks renders the en-US text. At most 40
+    keys per locale and 200 characters per value; the runtime drops an entry that breaks a limit, drops the whole
+    block when en-US is missing or the cutout id is outside the module, and logs each drop once in development. The
+    module script runs when the component is imported, in the bundle and in the live loader, so the keys are known
+    before the component renders. Cutout entries are merged after the panel's own messages for the same locale, so a
+    cutout key overrides a shared key of the same name. A later call for the same cutout id replaces the earlier one.
+    dovetail messages check --panels reads the blocks of the panel's cutouts and reports the same limits
+    (cutout_block_invalid).
 development_server:
   command: dovetail dev --app <shell> --panels <dir>...
   behaviour:
@@ -2127,6 +2141,14 @@ release_process:
   - Tag the release; publish the Ruby gem and the npm runtime package together with the same version.
   course_term_rule: During a course term only patch releases ship to students, and each is announced with the rules
     it touches.
+  course_term_exceptions:
+  - version: 0.5.0
+    date: 2026-10-28
+    granted_by: the instructor, through the question tool
+    reason: >-
+      A panel slice could not add readable wording of its own (a student's A2 panels, 2026-10-23). The cutout message block adds the messages export, a semver minor, during the term.
+      Nothing existing changes behaviour. The student announcement names the block, its limits and the en-US
+      fallback.
 grokit_panel_shapes:
   status: draft, derived from the Grokit spec's panels and cutouts; Teach compiles and signs these
   panels:

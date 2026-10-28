@@ -18,7 +18,7 @@ module Dovetail
         lines << ""
         lines << "const api = createPanelApi<#{pascal}ModuleTypes>('#{module_id}');"
         lines << ""
-        lines << "export const { openOverlay, toast, navigate, link, useRoute, store, emit, on, shortcut, every, after, frame, subscribe, useId, useProps, useContractVersion, t, formatNumber, formatMoney, formatDate, formatPercent } = api;"
+        lines << "export const { openOverlay, toast, navigate, link, useRoute, store, emit, on, shortcut, every, after, frame, subscribe, useId, useProps, useContractVersion, messages, t, formatNumber, formatMoney, formatDate, formatPercent } = api;"
         lines.join("\n") + "\n"
       end
     end

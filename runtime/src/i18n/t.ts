@@ -1,5 +1,6 @@
 import { runtime } from '../shell/state.svelte.js';
 import { formatICU } from './icu.js';
+import { cutoutMessagesFor } from './cutouts.js';
 import runtimeEnUS from './messages/en-US.json';
 
 const warned = new Set<string>();
@@ -13,6 +14,7 @@ function catalogFor(locale: string): Record<string, string> {
   for (const panel of registry.panels) {
     Object.assign(merged, panel.messages[locale] ?? {});
   }
+  Object.assign(merged, cutoutMessagesFor(locale));
   return merged;
 }
 

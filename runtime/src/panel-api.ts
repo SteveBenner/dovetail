@@ -7,6 +7,7 @@ import { shortcutFor } from './seams/keyboard/index.js';
 import { everyFor, afterFor, frameFor, subscribeFor } from './seams/lifecycle/index.js';
 import { useIdFor } from './seams/identity/index.js';
 import { tFor } from './i18n/t.js';
+import { registerCutoutMessages } from './i18n/cutouts.js';
 import { formatNumberFor, formatMoneyFor, formatDateFor, formatPercentFor } from './i18n/format.js';
 import { findPanel } from './shell/state.svelte.js';
 import type { Money } from './types.js';
@@ -60,6 +61,9 @@ export function createPanelApi<M = unknown>(module: string) {
     },
     useContractVersion(): number {
       return findPanel(module)?.contract_version ?? 1;
+    },
+    messages(cutoutId: string, catalog: Record<string, Record<string, string>>) {
+      return registerCutoutMessages(module, cutoutId, catalog);
     },
     t(key: string, params?: Record<string, string | number>) {
       return tFor(module, key, params);

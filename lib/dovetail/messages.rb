@@ -1,4 +1,5 @@
 require "json"
+require "dovetail/cutout_messages"
 
 module Dovetail
   module Messages
@@ -35,9 +36,28 @@ module Dovetail
       end
     end
 
+    def check_blocks(panel_dir)
+      module_id = module_id_for(panel_dir)
+      Dir.glob(File.join(panel_dir, "src", "**", "*.svelte")).sort.flat_map do |path|
+        text = File.read(path)
+        blocks = Dovetail::CutoutMessages.blocks(text)
+        next [] if blocks.empty?
+        relative = path.sub(/\A#{Regexp.escape(panel_dir)}\/?/, "")
+        block_id = blocks.first[:cutout_id]
+        rows = Dovetail::CutoutMessages.problems(text, block_id)
+        if module_id && !module_id.empty? && !block_id.start_with?("#{module_id}.")
+          rows << { code: "wrong_module", line: blocks.first[:line], message: "The cutout id must start with #{module_id}." }
+        end
+        rows.map do |row|
+          { "panel" => panel_dir, "locale" => "", "key" => "#{relative}:#{row[:line]}", "issue" => "cutout_block_invalid", "detail" => row[:code] }
+        end
+      end
+    end
+
     def check(panel_dirs, shell_dir: nil)
       findings = shell_dir ? check_shell(shell_dir, panel_dirs) : []
       panel_dirs.each do |panel_dir|
+        findings.concat(check_blocks(panel_dir))
         messages_dir = File.join(panel_dir, "messages")
         next unless Dir.exist?(messages_dir)
         base_path = File.join(messages_dir, "en-US.json")

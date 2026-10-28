@@ -4,6 +4,21 @@ All notable changes to Dovetail are recorded here. The project follows [Semantic
 rule ids are stable, the shape schema changes only with a new schema id, and the runtime's exported API follows
 semver.
 
+## [0.5.0] - 2026-10-28
+
+### Added
+
+- A cutout component can carry its own wording. One `<script module lang="ts">` calls `messages('<cutout_id>', {...})` with a strict JSON object of locale to `{key: text}`. Every key starts with the cutout id. en-US is required, other locales fall back to en-US, and the limits are 40 keys per locale and 200 characters per value. The runtime merges the block after the panel's own messages, drops entries that break a limit, and warns about each drop in development. `messages` is exported from `@dovetail/runtime`, from the per-module bind files and from the live runtime.
+- `dovetail messages check --panels` reports an invalid cutout block as `cutout_block_invalid`.
+
+### Fixed
+
+- The shape checker treats Svelte 5's bare `<script module>` as a module script, the same as `context="module"`.
+
+### Course term exception
+
+- `course_term_rule` allows only patch releases during a term. The instructor granted 0.5.0 an exception on 2026-10-28, recorded under `release_process.course_term_exceptions`. A student's panels needed wording that the shared messages file did not have. Existing behaviour does not change. The student announcement names the block, its limits and the en-US fallback.
+
 ## [0.4.2] - 2026-10-13
 
 ### Fixed

@@ -35,7 +35,7 @@ module Dovetail
 
           findings = Dovetail::Messages.check(panel_dirs, shell_dir: shell_dir)
           findings.each do |f|
-            stdout.puts("#{f["panel"]}: #{f["locale"]} #{f["key"]} #{f["issue"]}") unless quiet?
+            stdout.puts("#{f["panel"]}: #{f["locale"]} #{f["key"]} #{f["issue"]}#{f["detail"] ? " #{f["detail"]}" : ""}") unless quiet?
           end
           findings.empty? ? 0 : 1
         end
